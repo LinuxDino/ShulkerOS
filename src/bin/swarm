@@ -1,0 +1,235 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- swarm: many OC2 computers working as one (see `man swarm`)
+local U = require("shulker.util")
+local json = require("shulker.json")
+local S = require("shulker.swarm")
+local c = U.c
+
+local USAGE = [==[
+usage: swarm init [--work]          make this computer the main node (--work: it runs jobs too)
+       swarm join [MAIN-IP]         make this computer a worker (default main 10.42.0.1)
+       swarm status                 nodes, load, memory, disk, jobs
+       swarm run [--on NODE] CMD    run CMD on every node (or one) and show the output
+       swarm submit CMD             queue CMD for any free node, print the job number
+       swarm map 'CMD {}' ITEM...   one job per ITEM ({} = the item) spread over the nodes
+       swarm jobs | result ID | wait ID... | cancel ID|--all
+       swarm enroll [MINUTES]       accept new nodes for a while (default 30)
+       swarm forget NODE            remove a node     swarm bench   measure the speed-up
+       swarm log                    what the service did     swarm leave   stop being part of it]==]
+
+local a = arg
+local cmd = a[1]
+if not cmd or cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(cmd and 0 or 1) end
+
+local function call(msg, timeout)
+  local conf = S.loadConf()
+  if not conf.role then U.die("swarm: this computer is not in a swarm. Run `swarm init` (main) or `swarm join` (worker).") end
+  if conf.role == "main" then conf.leader = "127.0.0.1" end
+  local reply, err = S.call(conf, msg, timeout)
+  if not reply then U.die("swarm: " .. err) end
+  return reply
+end
+
+local function needRoot()
+  if U.trim((U.capture("id -u"))) ~= "0" then U.die("swarm: run this as root") end
+end
+
+-- wait for jobs to end; returns the job list
+local function waitJobs(ids, quiet)
+  local t0 = os.time()
+  local spin = { "|", "/", "-", "\\" }
+  local i = 0
+  while true do
+    local r = call({ op = "jobs", ids = json.array(ids), full = true })
+    local open = 0
+    for _, j in ipairs(r.jobs) do if j.state == "queued" or j.state == "running" then open = open + 1 end end
+    if open == 0 then
+      if not quiet and U.isatty(2) then io.stderr:write("\r\27[K") end
+      return r.jobs, os.time() - t0
+    end
+    if not quiet and U.isatty(2) then
+      i = i + 1
+      io.stderr:write(("\r%s %d of %d jobs left, %ds"):format(spin[i % 4 + 1], open, #ids, os.time() - t0))
+    end
+    os.execute("sleep 1")
+  end
+end
+
+local function showJob(j, header)
+  local mark = j.state == "done" and c("ok", "ok") or c("err", j.state)
+  if header then print(c("accent", ("== %s"):format(j.node or "?")) .. "  " .. mark .. c("dim", (" job %d, exit %s"):format(j.id, tostring(j.rc)))) end
+  local out = tostring(j.out or "")
+  if out ~= "" then io.write(out, out:sub(-1) == "\n" and "" or "\n") end
+end
+
+local function bar(free, total, width)
+  free, total = tonumber(free) or 0, tonumber(total) or 0
+  if total <= 0 then return string.rep(" ", width) end
+  local used = math.floor((total - free) / total * width + 0.5)
+  return c("accent", string.rep("#", used)) .. c("dim", string.rep(".", width - used))
+end
+
+---------------------------------------------------------------- setup
+if cmd == "init" then
+  needRoot()
+  local conf = S.loadConf()
+  conf.role = "main"
+  conf.token = conf.token or S.newToken()
+  conf.leader = S.LEADER_IP
+  conf.rename = "no"
+  conf.work = (a[2] == "--work") and "1" or (conf.work or "0")
+  S.saveConf(conf)
+  U.write(U.etcdir() .. "/swarm-dnsmasq.conf", S.dnsmasqConf())
+  print(c("accent", ":: ") .. "network: " .. S.LEADER_IP .. "/24, gateway " .. S.GATEWAY_IP .. ", DHCP for the workers")
+  os.execute(U.q(U.home() .. "/bin/netcfg") .. " static " .. S.LEADER_IP .. "/24 " .. S.GATEWAY_IP .. " 1.1.1.1 >/dev/null")
+  S.stopServices()
+  S.startServices(conf)
+  os.execute("sleep 2")
+  call({ op = "enroll", seconds = 1800 })
+  print(c("ok", "This computer is the main node of the swarm."))
+  print("Now power on the workers (\"Shulker Swarm Node\" drive, network card, cabled to the same hub),")
+  print("or run `swarm join` on computers that already have Shulker OS. New nodes are accepted for")
+  print("30 minutes (`swarm enroll` opens the window again). Watch them arrive: " .. c("soft", "swarm status"))
+  os.exit(0)
+elseif cmd == "join" then
+  needRoot()
+  local conf = S.loadConf()
+  conf.role = "worker"
+  conf.leader = a[2] or conf.leader or S.LEADER_IP
+  conf.name, conf.token = nil, nil
+  S.saveConf(conf)
+  if not S.ip() then
+    print(c("accent", ":: ") .. "getting an address from the main node (DHCP)")
+    os.execute(U.q(U.home() .. "/bin/netcfg") .. " dhcp >/dev/null")
+  end
+  S.stopServices()
+  S.startServices(conf)
+  print(c("ok", "Joining the swarm at " .. conf.leader .. ".") .. " Check with `swarm status` in a few seconds.")
+  print(c("dim", "(The main node must be accepting nodes: `swarm enroll` there.)"))
+  os.exit(0)
+elseif cmd == "leave" then
+  needRoot()
+  S.stopServices()
+  os.remove(S.confPath())
+  print("This computer left the swarm (its network setup is unchanged).")
+  os.exit(0)
+elseif cmd == "services" then           -- used by the boot script
+  S.startServices()
+  os.exit(0)
+elseif cmd == "log" then
+  for _, f in ipairs({ "/tmp/swarmd-leader.log", "/tmp/swarmd-worker.log" }) do
+    if U.exists(f) then print(c("accent", "== " .. f)) os.execute("tail -n 20 " .. f) end
+  end
+  os.exit(0)
+end
+
+---------------------------------------------------------------- talking to the main node
+if cmd == "status" or cmd == "st" then
+  local r = call({ op = "status" })
+  local on = 0
+  print(c("dim", ("%-8s %-14s %-6s %-5s %-14s %-14s %s"):format("NODE", "ADDRESS", "STATE", "LOAD", "MEMORY", "DISK", "UP")))
+  for _, n in ipairs(r.nodes) do
+    local st = n.stats or {}
+    local state = not n.online and c("err", "off  ") or n.busy and c("warn", "busy ") or c("ok", "idle ")
+    if n.online then on = on + 1 end
+    print(("%-8s %-14s %s %-5s %s %s %s"):format(c("soft", ("%-8s"):format(n.name)), n.ip or "?", state,
+      st.load and ("%.2f"):format(st.load) or "-", bar(st.mem_free, st.mem_total, 6) .. " " .. U.human((st.mem_total or 0) * 1024):sub(1, 6),
+      bar(st.disk_free, st.disk_total, 6) .. " " .. U.human((st.disk_free or 0) * 1024) .. " free",
+      n.online and S.age(st.uptime) or c("dim", "seen " .. S.age(n.seen) .. " ago")))
+  end
+  print(c("dim", ("%d node%s, %d online, %d job%s running, %d queued%s"):format(#r.nodes, #r.nodes == 1 and "" or "s", on,
+    r.running, r.running == 1 and "" or "s", r.queued,
+    r.enrolling > 0 and (", accepting new nodes for " .. S.age(r.enrolling)) or "")))
+  if #r.nodes == 0 then print("No nodes yet. Power on the workers, or `swarm join` on them; `swarm enroll` if the window closed.") end
+elseif cmd == "run" then
+  local target, i = "all", 2
+  if a[2] == "--on" then target, i = a[3], 4 end
+  local command = table.concat(a, " ", i)
+  if command == "" then U.die("usage: swarm run [--on NODE] COMMAND") end
+  local r = call({ op = "submit", cmd = command, target = target })
+  local jobs = waitJobs(r.ids)
+  table.sort(jobs, function(x, y) return (x.node or "") < (y.node or "") end)
+  local bad = 0
+  for _, j in ipairs(jobs) do showJob(j, true) if j.state ~= "done" then bad = bad + 1 end end
+  os.exit(bad == 0 and 0 or 1)
+elseif cmd == "submit" then
+  local command = table.concat(a, " ", 2)
+  if command == "" then U.die("usage: swarm submit COMMAND") end
+  local r = call({ op = "submit", cmd = command, target = "any" })
+  print(r.ids[1])
+elseif cmd == "map" then
+  local template = a[2]
+  local items = {}
+  for i = 3, #a do items[#items + 1] = a[i] end
+  if #items == 0 and not U.isatty(0) then for line in io.lines() do if line:match("%S") then items[#items + 1] = line end end end
+  if not template or #items == 0 then U.die("usage: swarm map 'COMMAND {}' ITEM...   (or items on stdin, one per line)") end
+  if not template:find("{}", 1, true) then template = template .. " {}" end
+  local r = call({ op = "submit", cmd = template, map = json.array(items) })
+  local jobs, secs = waitJobs(r.ids)
+  table.sort(jobs, function(x, y) return x.id < y.id end)
+  local bad = 0
+  for k, j in ipairs(jobs) do
+    if j.state ~= "done" then bad = bad + 1 io.stderr:write(c("err", ("%s: %s on %s (exit %s)\n"):format(items[k], j.state, j.node or "?", tostring(j.rc)))) end
+    showJob(j, false)
+  end
+  io.stderr:write(c("dim", ("%d job%s in %ds\n"):format(#jobs, #jobs == 1 and "" or "s", secs)))
+  os.exit(bad == 0 and 0 or 1)
+elseif cmd == "jobs" then
+  local r = call({ op = "jobs" })
+  if #r.jobs == 0 then print(c("dim", "no jobs")) end
+  for _, j in ipairs(r.jobs) do
+    local st = j.state == "done" and c("ok", "done   ") or (j.state == "running" and c("warn", "running") or
+      j.state == "queued" and c("dim", "queued ") or c("err", ("%-7s"):format(j.state)))
+    print(("%4d %s %-7s %s"):format(j.id, st, j.node or "-", j.cmd:gsub("\n", " "):sub(1, 50)))
+  end
+elseif cmd == "result" or cmd == "wait" then
+  local ids = {}
+  for i = 2, #a do ids[#ids + 1] = tonumber(a[i]) end
+  if #ids == 0 then U.die("usage: swarm " .. cmd .. " ID...") end
+  local jobs = cmd == "wait" and waitJobs(ids) or call({ op = "jobs", ids = json.array(ids), full = true }).jobs
+  for _, j in ipairs(jobs) do showJob(j, #jobs > 1 or cmd == "result") end
+elseif cmd == "cancel" then
+  local r = call({ op = "cancel", id = tonumber(a[2] or ""), all = a[2] == "--all" })
+  print(("cancelled %d queued job(s)"):format(r.cancelled))
+elseif cmd == "enroll" then
+  local minutes = tonumber(a[2] or "") or 30
+  call({ op = "enroll", seconds = minutes * 60 })
+  print(("Accepting new nodes for %d minutes."):format(minutes))
+elseif cmd == "forget" then
+  if not a[2] then U.die("usage: swarm forget NODE") end
+  call({ op = "forget", name = a[2] })
+  print("removed " .. a[2])
+elseif cmd == "bench" then
+  -- the same CPU-bound work, first on one node, then one piece per online node at once
+  local st = call({ op = "status" })
+  local n = 0
+  for _, x in ipairs(st.nodes) do if x.online then n = n + 1 end end
+  if n == 0 then U.die("swarm: no node is online") end
+  local work = "lua -e 'local x = 0 for i = 1, 20000000 do x = x + i % 7 end'"
+  print(("Benchmark: a fixed piece of Lua work, on 1 node, then on %d node%s at once."):format(n, n == 1 and "" or "s"))
+  local r1 = call({ op = "submit", cmd = work, target = "any" })
+  local _, t1 = waitJobs(r1.ids)
+  local items = {}
+  for i = 1, n do items[i] = tostring(i) end
+  local rn = call({ op = "submit", cmd = work .. " # {}", map = json.array(items) })
+  local _, tn = waitJobs(rn.ids)
+  t1, tn = math.max(t1, 1), math.max(tn, 1)
+  print(("1 piece on 1 node: %ds.  %d pieces on %d nodes: %ds.  Speed-up: %.1fx (ideal %dx)"):format(
+    t1, n, n, tn, n * t1 / tn, n))
+else
+  U.die("swarm: unknown command " .. cmd .. "\n" .. USAGE)
+end

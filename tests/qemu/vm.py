@@ -17,7 +17,10 @@ PROMPT = "__SHULKER_TEST__# "
 
 
 class Sedna:
-    def __init__(self, rootfs, kernel, builtin=None, memory=64, copy=True, log=None, hostfwd=None):
+    def __init__(self, rootfs, kernel, builtin=None, memory=64, copy=True, log=None, hostfwd=None, lan=None, mac=None):
+        """lan: a multicast group like "230.0.0.1:1234": VMs on the same group share one Ethernet segment
+        (like OC2 computers cabled to one hub); mac: this VM's MAC address on it."""
+        self.lan, self.mac = lan, mac
         self.rootfs, self.kernel, self.builtin = rootfs, kernel, builtin
         self.memory, self.copy, self.log, self.hostfwd = memory, copy, log, hostfwd
         self.child = None
@@ -32,15 +35,17 @@ class Sedna:
     def start(self, login=True):
         disk = self.rootfs
         if self.copy:
-            disk = self.rootfs + ".run"
+            disk = self.rootfs + "." + (self.mac or "x").replace(":", "") + ".run"
             shutil.copyfile(self.rootfs, disk)
         net = "user,id=n0"
         if self.hostfwd:
             net += "," + self.hostfwd
+        if self.lan:
+            net = "socket,id=n0,mcast=" + self.lan
         args = ["-M", "virt", "-m", str(self.memory), "-nographic", "-monitor", "none",
                 "-kernel", self.kernel, "-append", "root=/dev/vda rw console=ttyS0",
                 "-drive", f"file={disk},format=raw,if=none,id=hd0", "-device", "virtio-blk-device,drive=hd0",
-                "-netdev", net, "-device", "virtio-net-device,netdev=n0"]
+                "-netdev", net, "-device", "virtio-net-device,netdev=n0" + (",mac=" + self.mac if self.mac else "")]
         if self.builtin:
             args += ["-fsdev", f"local,id=fs0,path={os.path.abspath(self.builtin)},security_model=none,readonly=on",
                      "-device", "virtio-9p-device,fsdev=fs0,mount_tag=builtin"]

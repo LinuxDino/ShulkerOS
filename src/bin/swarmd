@@ -1,0 +1,151 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- swarmd: the Shulker Swarm service.  swarmd leader | swarmd worker   (started at boot by rc.shulker)
+local U = require("shulker.util")
+local json = require("shulker.json")
+local S = require("shulker.swarm")
+
+local mode = arg[1]
+if mode ~= "leader" and mode ~= "worker" then
+  io.stderr:write("usage: swarmd leader|worker   (normally started at boot; see `man swarm`)\n")
+  os.exit(2)
+end
+if not S.socket then io.stderr:write("swarmd: luasocket is missing\n") os.exit(1) end
+local socket = S.socket
+
+local function log(...)
+  io.write(os.date("%H:%M:%S "), table.concat({ ... }, " "), "\n")
+  io.flush()
+end
+
+---------------------------------------------------------------- leader
+if mode == "leader" then
+  local conf = S.loadConf()
+  if not conf.token then io.stderr:write("swarmd: no token in " .. S.confPath() .. " (run `swarm init`)\n") os.exit(1) end
+  local L = S.newLeader(conf)
+  if tonumber(conf.enroll_until or "") then L.enrollUntil = tonumber(conf.enroll_until) end
+  local server, err
+  for _ = 1, 30 do                              -- the address may not be up yet right after boot
+    server, err = socket.bind("*", conf.port)
+    if server then break end
+    socket.sleep(1)
+  end
+  if not server then log("cannot listen on port", conf.port, err) os.exit(1) end
+  server:settimeout(0)
+  log("leader listening on port", conf.port)
+  local lastReap = 0
+  while true do
+    local ready = socket.select({ server }, nil, 1)
+    if ready and #ready > 0 then
+      local c = server:accept()
+      if c then
+        c:settimeout(3)
+        local line = c:receive("*l")
+        local reply
+        if line then
+          local msg = json.decode(line)
+          reply = L.handle(msg)
+        else
+          reply = { error = "empty request" }
+        end
+        local okEnc, text = pcall(json.encode, reply)
+        c:send((okEnc and text or '{"error":"encode failed"}') .. "\n")
+        c:close()
+      end
+    end
+    if os.time() - lastReap >= 2 then L.reap() lastReap = os.time() end
+  end
+end
+
+---------------------------------------------------------------- worker
+local conf = S.loadConf()
+local joined = conf.name ~= nil and conf.token ~= nil
+local running                                 -- { id, dir } of the job in progress
+local results = {}                            -- finished, not yet reported
+local backoff = S.HEARTBEAT
+
+local function setName(name)
+  if not name or name == conf.name then return end
+  conf.name = name
+  S.saveConf(conf)
+  if conf.rename ~= "no" then
+    U.write("/etc/hostname", name .. "\n")
+    os.execute("hostname " .. U.q(name))
+  end
+  log("this node is", name)
+end
+
+local function startJob(job)
+  local dir = "/tmp/swarm-job-" .. job.id
+  os.execute("rm -rf " .. U.q(dir))
+  U.mkdir(dir)
+  U.write(dir .. "/cmd.sh", tostring(job.cmd) .. "\n")
+  local t = math.max(1, math.floor(tonumber(job.timeout) or 600))
+  -- in the background, so the heartbeats go on while the job runs
+  os.execute(("(cd /root 2>/dev/null; timeout %d sh %s/cmd.sh > %s/out 2>&1 < /dev/null; echo $? > %s/rc.tmp; mv %s/rc.tmp %s/rc) &")
+    :format(t, dir, dir, dir, dir, dir))
+  running = { id = job.id, dir = dir }
+  log("job", job.id, "started")
+end
+
+local function checkJob()
+  if not running then return end
+  local rc = U.read(running.dir .. "/rc")
+  if not rc then return end
+  local out = U.read(running.dir .. "/out") or ""
+  results[#results + 1] = { id = running.id, rc = tonumber(U.trim(rc)) or 1, out = out:sub(-S.MAX_OUTPUT) }
+  os.execute("rm -rf " .. U.q(running.dir))
+  log("job", running.id, "finished, exit", U.trim(rc))
+  running = nil
+end
+
+log("worker for", conf.leader .. ":" .. conf.port)
+local lastDhcp = 0
+while true do
+  checkJob()
+  -- no address yet (the main node was off when this one booted): keep asking for one
+  if not S.ip() and os.time() - lastDhcp >= 20 then
+    lastDhcp = os.time()
+    os.execute("udhcpc -n -q -t 3 -i eth0 >/dev/null 2>&1")
+  end
+  local stats = S.stats()
+  local reply, err
+  if not joined then
+    reply, err = S.call(conf, { op = "join", stats = stats })
+    if reply then
+      joined = true
+      if reply.token then conf.token = reply.token S.saveConf(conf) end
+      setName(reply.name)
+    end
+  else
+    reply, err = S.call(conf, { op = "heartbeat", stats = stats, running = running and running.id or nil,
+                                results = json.array(results) })
+    if reply then
+      results = {}
+      setName(reply.name)
+      if reply.job and not running then startJob(reply.job) end
+    elseif err and (err:find("join first") or err:find("wrong swarm token")) then
+      joined = false
+    end
+  end
+  if reply then
+    backoff = S.HEARTBEAT
+  else
+    log(err)
+    backoff = math.min(backoff * 2, 30)
+  end
+  socket.sleep(running and 1 or backoff)
+end

@@ -26,6 +26,11 @@ start() {
 		printf 'Starting crond (Shulker jobs): '
 		crond -b -c "$ETC/crontabs" -L /tmp/crond.log && echo OK || echo FAIL
 	fi
+	# Shulker Swarm (swarm init / swarm join / the Swarm Node drive)
+	if [ -f "$ETC/swarm.conf" ]; then
+		echo "Starting Shulker Swarm: $(sed -n 's/^role=//p' "$ETC/swarm.conf")"
+		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/swarm" services
+	fi
 	# ssh (sshctl on)
 	if [ -f "$ETC/ssh.enabled" ] && [ -x /etc/init.d/dropbear ] && ! pidof dropbear >/dev/null 2>&1; then
 		/etc/init.d/dropbear start

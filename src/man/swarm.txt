@@ -1,0 +1,62 @@
+swarm - many computers working as one (Shulker Swarm)
+
+SYNOPSIS
+  swarm init [--work]            on the main computer
+  swarm join [MAIN-IP]           on a computer that should become a worker
+  swarm status
+  swarm run [--on NODE] COMMAND  swarm submit COMMAND   swarm map 'COMMAND {}' ITEM...
+  swarm jobs | result ID | wait ID... | cancel ID|--all
+  swarm enroll [MINUTES] | forget NODE | bench | log | leave
+
+WHAT IT IS
+  One main computer and any number of workers on one in-game network. OC2 runs
+  every computer in parallel on the server, so N computers do up to N times the
+  work, as long as the work can be split into pieces (jobs). Memory is not
+  shared: each job runs on one computer.
+
+BUILDING ONE (10 workers + 1 main)
+  Every computer: CPU, memory, a network interface card, and a network
+  connector on any side except the front.
+  The main computer: the "Shulker OS" hard drive (or any Shulker OS install).
+  The workers: the "Shulker Swarm Node" hard drive from the data pack. Nothing
+  to type on them.
+  Wiring: one network hub with a network connector on each of its 6 faces.
+  Each of those connectors takes 2 network cables, so one hub serves up to 12
+  computers: run a cable from each computer's connector to a hub connector.
+  For internet, put an Internet Gateway with its own connector on the same
+  network: everyone reaches it at 10.42.0.254.
+
+  1. Power on the main computer, log in, run:  swarm init
+     (add --work if the main computer should run jobs too)
+  2. Power on the workers. They get an address from the main computer, join,
+     and are named node2, node3, ...  New nodes are accepted for 30 minutes
+     after `swarm init`; `swarm enroll` opens the window again.
+  3. swarm status  shows every node with load, memory, disk and uptime.
+
+  A computer that already runs Shulker OS becomes a worker with `swarm join`.
+  Workers powered on before the main computer keep trying until it is there.
+
+USING IT
+  swarm run uname -a                 on every node, output per node
+  swarm run --on node3 df -h /       on one node
+  swarm submit 'sh /root/work.sh'    queue a job for any free node
+  swarm map 'lua crunch.lua {}' 1 2 3 4 5 6 7 8 9 10
+                                     ten jobs spread over the free nodes, output
+                                     in order ({} becomes the item; items can
+                                     also come on stdin, one per line)
+  swarm bench                        measures the speed-up of this swarm
+  Any node can submit jobs; the main computer schedules them. A job runs as a
+  shell command in /root with a time limit (10 minutes by default). If its
+  node goes away, a queued "any node" job is given to another node once.
+
+HOW IT WORKS
+  The main computer has 10.42.0.1, hands out 10.42.0.100-250 by DHCP (Sedna's
+  dnsmasq) and runs the swarm service (swarmd) on TCP port 4242. Workers report
+  to it every 3 seconds and get their jobs in the reply, so nothing connects to
+  the workers. Requests carry the swarm token, which workers receive when they
+  join. The in-game network is not encrypted.
+
+FILES
+  /etc/shulker/swarm.conf         role, main address, token, node name
+  /etc/shulker/swarm-nodes.json   the main computer's list of nodes
+  /tmp/swarmd-*.log               service logs (`swarm log`)

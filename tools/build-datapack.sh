@@ -88,6 +88,21 @@ EOF
 	fi
 	e2fsck -fn "$IMG" > "$B/fsck.log" 2>&1 || { cat "$B/fsck.log" >&2; echo "the HDD image does not pass e2fsck" >&2; exit 1; }
 	echo '{ "name": "Shulker OS", "color": "purple" }' > "$(dirname "$IMG")/shulkeros.json"
+
+	# the same drive as a swarm worker: DHCP from the main node, joins it at boot (`man swarm`)
+	NODE="$(dirname "$IMG")/shulkeros-node.bin"
+	cp "$IMG" "$NODE"
+	printf 'auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n' > "$B/interfaces"
+	printf '# Shulker Swarm (see `man swarm`)\nleader=10.42.0.1\nport=4242\nrole=worker\n' > "$B/swarm.conf"
+	debugfs -w -f - "$NODE" > "$B/debugfs-node.log" 2>&1 <<NODECMDS
+rm /etc/network/interfaces
+write $B/interfaces /etc/network/interfaces
+write $B/swarm.conf /etc/shulker/swarm.conf
+set_inode_field /etc/shulker/swarm.conf mode 0100600
+NODECMDS
+	if grep -qi "error\|could not\|no space" "$B/debugfs-node.log"; then cat "$B/debugfs-node.log" >&2; exit 1; fi
+	e2fsck -fn "$NODE" > "$B/fsck-node.log" 2>&1 || { cat "$B/fsck-node.log" >&2; echo "the node image does not pass e2fsck" >&2; exit 1; }
+	echo '{ "name": "Shulker Swarm Node", "color": "magenta" }' > "$(dirname "$IMG")/shulkeros-node.json"
 	free=$(debugfs -R stats "$IMG" 2>/dev/null | awk -F: '/^Free blocks/ {gsub(/ /, "", $2); print $2}')
 	echo "hdd image: $(du -k "$IMG" | cut -f1) KB, $free KB free inside"
 fi

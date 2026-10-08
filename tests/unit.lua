@@ -313,6 +313,39 @@ test("non-interactive sessions refuse risky tools and keep history valid", funct
   eq(#S.msgs, 0)
 end)
 
+print("swarm")
+test("leader: enrollment, names, heartbeats, jobs, map, requeue", function()
+  local S = require("shulker.swarm")
+  local L = S.newLeader({ token = "t0k" })
+  local function st(mac) return { mac = mac, ip = "10.42.0." .. #mac, host = "h" } end
+  truthy(L.handle({ op = "join", stats = st("aa") }).error, "closed enrollment refuses")
+  L.enrollUntil = os.time() + 60
+  local j1 = L.handle({ op = "join", stats = st("aa") })
+  eq(j1.name, "node1") eq(j1.token, "t0k")
+  eq(L.handle({ op = "join", stats = st("bb") }).name, "node2")
+  eq(L.handle({ op = "join", stats = st("aa") }).name, "node1", "rejoin keeps the name")
+  truthy(L.handle({ op = "status", token = "bad" }).error, "token is checked")
+  local sub = L.handle({ op = "submit", token = "t0k", cmd = "echo {}", map = json.array({ "x", "y y" }) })
+  eq(#sub.ids, 2)
+  local h1 = L.handle({ op = "heartbeat", token = "t0k", stats = st("aa") })
+  eq(h1.job.cmd, "echo 'x'")
+  local h2 = L.handle({ op = "heartbeat", token = "t0k", stats = st("bb") })
+  eq(h2.job.cmd, "echo 'y y'")
+  eq(L.handle({ op = "heartbeat", token = "t0k", stats = st("aa"), running = h1.job.id }).job, nil, "busy nodes get no more work")
+  L.handle({ op = "heartbeat", token = "t0k", stats = st("aa"), results = json.array({ { id = h1.job.id, rc = 0, out = "x\n" } }) })
+  local jobs = L.handle({ op = "jobs", token = "t0k", full = true }).jobs
+  eq(jobs[1].state, "done") eq(jobs[1].out, "x\n") eq(jobs[1].node, "node1")
+  -- node2 vanishes: its job is queued again and node1 takes it
+  for _, n in pairs(L.nodes) do if n.name == "node2" then n.seen = os.time() - 100 end end
+  L.reap()
+  eq(L.job(h2.job.id).state, "queued")
+  eq(L.handle({ op = "heartbeat", token = "t0k", stats = st("aa") }).job.id, h2.job.id)
+  local all = L.handle({ op = "submit", token = "t0k", cmd = "uptime", target = "all" })
+  eq(#all.ids, 1, "only online nodes get an 'all' job")
+  local status = L.handle({ op = "status", token = "t0k" })
+  eq(#status.nodes, 2) eq(status.nodes[1].name, "node1")
+end)
+
 os.execute("rm -rf " .. U.q(tmp))
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

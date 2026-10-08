@@ -45,3 +45,4 @@ trap 'tests/mock.sh stop '$W EXIT
 python3 tests/qemu/test_sedna.py --sedna $W/sedna --builtin $W/builtin-ci --mode install --log $W/vm-install.log
 python3 tests/qemu/test_sedna.py --sedna $W/sedna --builtin $W/builtin-dp --mode datapack --log $W/vm-datapack.log
 python3 tests/qemu/test_sedna.py --sedna $W/sedna --rootfs $W/shulkeros.bin --builtin $W/builtin-ci --mode hdd --log $W/vm-hdd.log
+python3 tests/qemu/test_swarm.py --sedna $W/sedna --images dist/build/pack/data/shulkeros/block_devices/hdd --workers 3 --logdir $W
