@@ -45,6 +45,8 @@ DESCRIPTION
                --raid1     mirrored: survives a lost drive, space of one
                --separate  each drive on its own: /data/1, /data/2, ...
                            (the only choice on the stock Sedna kernel)
+             On stock Sedna: shulker linux kernel, reboot, shulker install
+             mdadm, then setup. Running setup again replaces /data (asks).
              setup erases the free drives. /data is mounted at every boot
              from /etc/shulker/disks.conf. The system drive is never used:
              with 4 bays you get the system plus 3 drives of /data.

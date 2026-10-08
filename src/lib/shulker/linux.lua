@@ -19,6 +19,11 @@ function M.osName()
   return "Linux"
 end
 
+-- mdadm: part of Shulker Linux, or the `mdadm` app on stock Sedna (/usr/local/bin is not on the boot PATH)
+function M.mdadm()
+  return U.which("mdadm") or (U.exists("/usr/local/bin/mdadm") and "/usr/local/bin/mdadm") or nil
+end
+
 function M.isShulkerLinux() return M.osName():match("^Shulker Linux") ~= nil end
 function M.hasMD() return U.exists("/proc/mdstat") end
 
@@ -182,9 +187,9 @@ end
 function M.setupDisks(mode, devs, log)
   if #devs == 0 then return nil, "no free drives: put more hard drives in the computer" end
   if mode ~= "separate" and not M.hasMD() then
-    return nil, "this kernel has no RAID: use --separate, or install Shulker Linux (`shulker linux install`)"
+    return nil, "this kernel has no RAID: run `shulker linux kernel` and reboot (or use --separate)"
   end
-  if mode ~= "separate" and not U.which("mdadm") then return nil, "mdadm is missing" end
+  if mode ~= "separate" and not M.mdadm() then return nil, "mdadm is missing: run `shulker install mdadm`" end
   local names = {}
   for _, d in ipairs(devs) do names[#names + 1] = d.dev end
   if mode == "separate" then
@@ -198,7 +203,7 @@ function M.setupDisks(mode, devs, log)
     local level = mode == "raid0" and "0" or mode == "raid1" and "1" or "linear"
     if #devs == 1 then level = "linear" end
     log(("creating /dev/md0 (%s) from %s"):format(mode, table.concat(names, " ")))
-    local out, code = U.capture(("mdadm --create /dev/md0 --run --metadata=1.2 --level=%s --raid-devices=%d %s")
+    local out, code = U.capture((U.q(M.mdadm()) .. " --create /dev/md0 --run --metadata=1.2 --level=%s --raid-devices=%d %s")
       :format(level, #devs, table.concat(names, " ")))
     if code ~= 0 then return nil, U.trim(out) end
     log("formatting /dev/md0")
@@ -209,6 +214,24 @@ function M.setupDisks(mode, devs, log)
   U.write(M.DISKS_CONF, ("# extra drives (`shulker disks`)\nmode=%s\ndevices=%s\n"):format(mode, table.concat(names, " ")))
   local ok, merr = M.mountDisks()
   if not ok then return nil, merr end
+  return true
+end
+
+-- undo the current /data (before setting it up again): unmount, stop the array, forget it
+function M.releaseDisks()
+  local c = M.disksConf()
+  if not c.mode then return true end
+  for dev, mnt in pairs(M.mounts()) do
+    if mnt == "/data" or mnt:match("^/data/%d+$") then
+      local out, code = U.capture("umount " .. U.q(mnt))
+      if code ~= 0 then return nil, ("cannot unmount %s (in use? %s)"):format(mnt, U.trim(out)) end
+    end
+  end
+  if c.mode ~= "separate" and U.exists("/sys/block/md0") and M.mdadm() then
+    U.capture(U.q(M.mdadm()) .. " --stop /dev/md0")
+    for d in (c.devices or ""):gmatch("%S+") do U.capture(U.q(M.mdadm()) .. " --zero-superblock " .. d) end
+  end
+  os.remove(M.DISKS_CONF)
   return true
 end
 
@@ -230,7 +253,7 @@ function M.mountDisks()
   end
   if not M.hasMD() then return nil, "this kernel has no RAID support" end
   if not U.exists("/sys/block/md0/md/array_state") or sysread("/sys/block/md0/md/array_state") == "clear" then
-    local out, code = U.capture("mdadm --assemble --run /dev/md0 " .. table.concat(devs, " "))
+    local out, code = U.capture(U.q(M.mdadm() or "mdadm") .. " --assemble --run /dev/md0 " .. table.concat(devs, " "))
     if code ~= 0 then return nil, "could not assemble /dev/md0: " .. U.trim(out) end
   end
   if not mounts["/dev/md0"] then

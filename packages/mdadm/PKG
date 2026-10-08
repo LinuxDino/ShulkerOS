@@ -1,0 +1,5 @@
+version 4.2
+description software RAID for the extra drives (with `shulker linux kernel`)
+file 4b7bb9a66ede97d1b3b825945c6f346fb9332f5bd3235a3c881fe1df29e0a2e8 326 bin/mdadm
+file 930692ca2934e1f720f0924b6f6a271663a5074016ca1c07fe0051edd5c36946 225240 lib/mdadm.gz
+file c9a7f994c0f6a06c11b883c4d0e25336f7f3d22924b610c758f4a7c3e66328d6 763 man/mdadm.txt

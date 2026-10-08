@@ -110,6 +110,17 @@ elseif cmd == "linux" or cmd == "disks" then
       local m = x:match("^%-%-(%a+%d?)$")
       if m == "raid0" or m == "linear" or m == "raid1" or m == "separate" then mode = m end
     end
+    local cur = L.disksConf()
+    if cur.mode then
+      print(("/data is now: %s over %s"):format(cur.mode, cur.devices or "?"))
+      if not confirm("Set it up again? This erases everything in /data.") then os.exit(1) end
+      local ok, err = L.releaseDisks()
+      if not ok then U.die("shulker: " .. err) end
+    end
+    if mode == "separate" and not L.hasMD() then
+      print(c("warn", "This kernel has no RAID,") .. " so each drive becomes its own /data/N.")
+      print("For one big /data: shulker linux kernel, reboot, shulker install mdadm, then shulker disks setup.")
+    end
     local spare = L.spare()
     if #spare == 0 then U.die("shulker: no free drives (the system drive is never used for /data)") end
     showDrives()

@@ -1,0 +1,23 @@
+mdadm - Linux software RAID (app)
+
+SYNOPSIS
+  mdadm --detail /dev/md0
+  cat /proc/mdstat
+
+DESCRIPTION
+  mdadm 4.2, built for Sedna from the same Buildroot as Shulker Linux. You
+  normally don't run it yourself: `shulker disks setup` creates the array
+  and `/data` is assembled and mounted at every boot.
+
+  RAID needs a kernel that knows it. On stock Sedna run
+      shulker linux kernel     (then reboot)
+  first; `shulker linux status` says "RAID support: yes" once it is there.
+
+  With 4 drive bays: the first drive stays the system, the other three
+  become /data:
+      shulker install mdadm
+      shulker disks setup            (RAID 0: all the space)
+      shulker disks setup --raid1    (mirror: survives a lost drive)
+
+SEE ALSO
+  shulker (disks, linux)

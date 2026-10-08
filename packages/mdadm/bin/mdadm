@@ -1,0 +1,8 @@
+#!/bin/sh
+# mdadm is kept compressed (an 8 MB system drive is tight) and unpacked to RAM on first use
+B=/tmp/.mdadm
+if [ ! -x "$B" ]; then
+	D=$(dirname "$(readlink -f "$0")")
+	gunzip -c "$D/../lib/mdadm.gz" > "$B.tmp" && chmod 755 "$B.tmp" && mv "$B.tmp" "$B" || { echo "mdadm: cannot unpack" >&2; exit 1; }
+fi
+exec "$B" "$@"

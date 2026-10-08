@@ -113,6 +113,9 @@ inside (a 16 MB drive).
 - `shulker linux kernel`: only the kernel, in place (checked, rolled back on a bad write); reboot
 - `shulker linux install`: the whole system onto an empty drive with your files and settings copied over; then put
   that drive first
+- **4 x 8 MB, no 16 MB drive?** Keep Sedna on the first drive and add RAID to it: `shulker linux kernel`, `reboot`,
+  `shulker install mdadm` (kept compressed, about 220 KB), then `shulker disks setup`. Leaves about 200 KB free on
+  the system drive and gives one 24 MB `/data`
 - `shulker disks setup`: the other drives become `/data`: `--raid0` (all the space, default), `--linear`, `--raid1`
   (mirror) or, on stock Sedna, `--separate` (`/data/1`, `/data/2`, ...)
 
