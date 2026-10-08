@@ -1,0 +1,332 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- desktop: the Shulker OS home screen (mouse or keys). Each app is a panel; heavy lifting is done by the
+-- normal commands, so everything here also works from the shell.
+local U = require("shulker.util")
+local T = require("shulker.tui")
+local tasks = require("shulker.tasks")
+local S = require("shulker.swarm")
+
+if not U.isatty(0) then U.die("desktop: needs a terminal") end
+
+local setup = U.read(U.etcdir() .. "/setup.conf") or ""
+local claudeOn = not setup:match("claude=off")
+
+local APPS = {
+  { id = "home", label = "Home", key = "h" },
+  { id = "tasks", label = "Tasks", key = "t" },
+  { id = "swarm", label = "Swarm", key = "w" },
+  { id = "drones", label = "Drones", key = "d" },
+  { id = "files", label = "Files", key = "f" },
+  { id = "net", label = "Network", key = "n" },
+  { id = "settings", label = "Settings", key = "s" },
+}
+if claudeOn then APPS[#APPS + 1] = { id = "claude", label = "Claude", key = "c" } end
+APPS[#APPS + 1] = { id = "shell", label = "Shell", key = "x" }
+
+local current = "home"
+local filesDir = os.getenv("HOME") or "/root"
+local filesSel = 1
+local message = ""
+
+-- run a normal command full screen, then come back
+local function runOutside(cmd, pause)
+  T.stop()
+  os.execute(cmd)
+  if pause then
+    io.write("\n\27[90m(press Enter to go back to the desktop)\27[0m")
+    io.read("l")
+  end
+  T.start()
+end
+
+local function first(cmd) return U.trim((U.capture(cmd))) end
+
+---------------------------------------------------------------- frame
+local SIDE = 14
+local function frame()
+  T.clear()
+  T.at(1, 1, string.rep(" ", T.W), "bright", "purple")
+  T.g(2, 1, "a", "lavender", "purple")
+  T.at(4, 1, "Shulker OS", "bright", "purple")
+  local host = first("hostname")
+  local right = host .. "  " .. os.date("%H:%M")
+  T.at(T.W - #right, 1, right, "lavender", "purple")
+  for i, app in ipairs(APPS) do
+    local y = 2 + i * 2
+    local sel = app.id == current
+    T.at(1, y, (" " .. app.label .. string.rep(" ", SIDE)):sub(1, SIDE - 1), sel and "bright" or "white", sel and "purple" or nil)
+  end
+  for y = 2, T.H - 1 do T.g(SIDE, y, "x", "purple") end
+  T.at(2, T.H, message ~= "" and message or "click an app or press its letter   q: quit to the shell", "gray")
+end
+
+local function appAt(ev)
+  if ev.type == "click" and ev.x < SIDE then
+    local i = math.floor((ev.y - 2) / 2)
+    if (ev.y - 2) % 2 == 0 and APPS[i] then return APPS[i].id end
+  end
+  if ev.type == "key" then
+    for _, a in ipairs(APPS) do if ev.key == a.key then return a.id end end
+  end
+end
+
+local X = SIDE + 2
+
+---------------------------------------------------------------- panels
+local P = {}
+
+function P.home()
+  T.at(X, 3, "Welcome to " .. first("hostname"), "bright")
+  local mem = U.read("/proc/meminfo") or ""
+  local total = tonumber(mem:match("MemTotal:%s*(%d+)")) or 0
+  local avail = tonumber(mem:match("MemAvailable:%s*(%d+)")) or 0
+  local df = {}
+  for w in first("df -k / | tail -n 1"):gmatch("%S+") do df[#df + 1] = w end
+  local up = tonumber((U.read("/proc/uptime") or "0"):match("^(%d+)")) or 0
+  local rows = {
+    { "System", first("cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p' | tr -d '\"'") .. "  kernel " .. first("uname -r") },
+    { "Uptime", ("%dh %dm"):format(up // 3600, up % 3600 // 60) },
+    { "Memory", ("%s used of %s"):format(U.human((total - avail) * 1024), U.human(total * 1024)) },
+    { "Disk", df[4] and ("%s free of %s"):format(U.human(tonumber(df[4]) * 1024), U.human(tonumber(df[2]) * 1024)) or "?" },
+    { "Network", first("ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}'") },
+  }
+  local conf = S.loadConf()
+  rows[#rows + 1] = { "Swarm", conf.role and (conf.role == "main" and "main node" or ("worker " .. (conf.name or "") .. (conf.base == "1" and ", drone base" or ""))) or "not in a swarm" }
+  local open = 0
+  for _, t in ipairs(tasks.load()) do if not t.blank and not t.done then open = open + 1 end end
+  rows[#rows + 1] = { "Tasks", open .. " open" }
+  for i, r in ipairs(rows) do
+    T.at(X, 4 + i, r[1], "lavender")
+    T.at(X + 10, 4 + i, (r[2] ~= "" and r[2] or "-"):sub(1, T.W - X - 12), "white")
+  end
+  T.logo(T.W - 13, T.H - 8)
+end
+
+function P.tasks()
+  T.at(X, 3, "Tasks", "bright")
+  local list = tasks.select("all")
+  for i = 1, math.min(#list, T.H - 9) do
+    local t = list[i]
+    T.at(X, 4 + i, tasks.render(t, function(role, s) return s end):sub(1, T.W - X), t.done and "gray" or (t.pri == "A" and "pink" or "white"))
+  end
+  if #list == 0 then T.at(X, 5, "No tasks yet.", "gray") end
+  local x = T.button(X, T.H - 2, "Add", "a")
+  T.button(x, T.H - 2, "Open the task list", "o")
+end
+
+function P.swarm()
+  local conf = S.loadConf()
+  T.at(X, 3, "Swarm", "bright")
+  if not conf.role then
+    T.text(X, 5, T.W - X - 2, "This computer is not in a swarm. Make it the main computer, or join one (the setup wizard does both).", "white")
+    local x = T.button(X, 9, "Make this the main computer", "m")
+    T.button(x, 9, "Join a swarm", "j")
+    return
+  end
+  local okS, r = pcall(function()
+    local c = S.loadConf()
+    if c.role == "main" then c.leader = "127.0.0.1" end
+    return assert(S.call(c, { op = "status" }, 5))
+  end)
+  if not okS then T.at(X, 5, "The main node does not answer: " .. tostring(r):sub(1, 50), "pink") return end
+  local online = 0
+  for _, n in ipairs(r.nodes) do if n.online then online = online + 1 end end
+  T.at(X, 4, ("%d nodes, %d online, %d jobs running, %d queued"):format(#r.nodes, online, r.running, r.queued), "white")
+  for i = 1, math.min(#r.nodes, T.H - 10) do
+    local n = r.nodes[i]
+    T.at(X, 5 + i, ("%-8s %-14s"):format(n.name, n.ip or "?"), n.online and "white" or "gray")
+    T.at(X + 24, 5 + i, not n.online and "off" or n.busy and "busy" or "idle", not n.online and "pink" or n.busy and "gold" or "lime")
+  end
+  local x = T.button(X, T.H - 2, "Live topology", "o")
+  x = T.button(x, T.H - 2, "Benchmark", "b")
+  T.button(x, T.H - 2, "Accept new nodes", "e")
+end
+
+function P.drones()
+  T.at(X, 3, "Drones", "bright")
+  local okS, r = pcall(function()
+    local c = S.loadConf()
+    if not c.role then error("not in a swarm", 0) end
+    if c.role == "main" then c.leader = "127.0.0.1" end
+    return assert(S.call(c, { op = "status" }, 5))
+  end)
+  if not okS then T.text(X, 5, T.W - X - 2, "Drones are part of a swarm: " .. tostring(r) .. ". See `man drone`.", "gray") return end
+  local y = 5
+  for _, n in ipairs(r.nodes) do
+    local d = n.stats and n.stats.drone
+    if d then
+      T.at(X, y, ("%-8s via %-8s"):format(n.name, n.via or "?"), n.online and "white" or "gray")
+      T.at(X + 22, y, d.charge and ("%3d%%"):format(d.charge) or "  ?", (d.charge or 100) < 15 and "pink" or "lime")
+      T.at(X + 28, y, d.pos and ("%d %d %d"):format(d.pos.x, d.pos.y, d.pos.z) or "", "gray")
+      y = y + 1
+    end
+  end
+  if y == 5 then T.text(X, 5, T.W - X - 2, "No drones yet: a robot with the Shulker Drone drive, linked to a drone base by a network tunnel card. See `man drone`.", "gray") end
+  T.button(X, T.H - 2, "Send a command", "o")
+end
+
+local function listDir(dir)
+  local out = { { name = "..", dir = true } }
+  local list = U.capture("ls -1Ap " .. U.q(dir) .. " 2>/dev/null")
+  for name in list:gmatch("[^\n]+") do out[#out + 1] = { name = name:gsub("/$", ""), dir = name:sub(-1) == "/" } end
+  return out
+end
+
+function P.files()
+  T.at(X, 3, filesDir:sub(-(T.W - X)), "bright")
+  local list = listDir(filesDir)
+  if filesSel > #list then filesSel = #list end
+  local room = T.H - 8
+  local top = math.max(1, filesSel - room + 1)
+  for i = top, math.min(#list, top + room - 1) do
+    local e = list[i]
+    T.at(X, 4 + i - top + 1, ((e.dir and "[" .. e.name .. "]" or e.name) .. string.rep(" ", T.W)):sub(1, T.W - X - 1),
+      i == filesSel and "bright" or (e.dir and "lavender" or "white"), i == filesSel and "purple" or nil)
+  end
+  local x = T.button(X, T.H - 2, "Open", "enter")
+  x = T.button(x, T.H - 2, "Edit", "e")
+  T.button(x, T.H - 2, "Delete", "delete", "danger")
+  return list
+end
+
+function P.net()
+  T.at(X, 3, "Network", "bright")
+  local out = U.capture(U.q(U.home() .. "/bin/netcfg") .. " status 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'")
+  local y = 5
+  for l in out:gmatch("[^\n]+") do T.at(X, y, l:sub(1, T.W - X), "white") y = y + 1 end
+  local x = T.button(X, T.H - 2, "Test", "o")
+  x = T.button(x, T.H - 2, "Automatic setup", "a")
+  T.button(x, T.H - 2, "Wizard", "z")
+end
+
+function P.settings()
+  T.at(X, 3, "Settings", "bright")
+  local ssh = U.exists(U.etcdir() .. "/ssh.enabled")
+  T.at(X, 5, "SSH server", "lavender") T.at(X + 16, 5, ssh and "on" or "off", "white")
+  T.at(X, 6, "Claude", "lavender") T.at(X + 16, 6, claudeOn and "on" or "off", "white")
+  T.at(X, 7, "Version", "lavender") T.at(X + 16, 7, U.trim(U.read(U.home() .. "/VERSION") or ""), "white")
+  local y = 10
+  local x = T.button(X, y, "Setup wizard", "z")
+  x = T.button(x, y, "Check for updates", "u")
+  T.button(x, y, "Apps", "p")
+  x = T.button(X, y + 2, ssh and "Turn SSH off" or "Turn SSH on", "o")
+  T.button(x, y + 2, claudeOn and "Turn Claude off" or "Turn Claude on", "l")
+end
+
+---------------------------------------------------------------- actions per app
+local ACT = {}
+ACT.tasks = {
+  a = function()
+    T.at(X, T.H - 4, "New task: ", "lavender")
+    local s = T.input(X + 10, T.H - 4, T.W - X - 12, "")
+    if s and s:match("%S") then tasks.add(s) message = "added" end
+  end,
+  o = function() runOutside(U.q(U.home() .. "/bin/task")) end,
+}
+ACT.swarm = {
+  m = function() runOutside(U.q(U.home() .. "/bin/swarm") .. " init", true) end,
+  j = function() runOutside(U.q(U.home() .. "/bin/swarm") .. " join", true) end,
+  o = function() runOutside(U.q(U.home() .. "/bin/swarm") .. " top") end,
+  b = function() runOutside(U.q(U.home() .. "/bin/swarm") .. " bench", true) end,
+  e = function() U.capture(U.q(U.home() .. "/bin/swarm") .. " enroll") message = "accepting new nodes for 30 minutes" end,
+}
+ACT.drones = {
+  o = function()
+    T.at(X, T.H - 4, "drone + command (e.g. drone1 home): ", "lavender")
+    local s = T.input(X + 36, T.H - 4, T.W - X - 38, "")
+    local name, rest = (s or ""):match("^(%S+)%s+(.+)$")
+    if name then runOutside(U.q(U.home() .. "/bin/swarm") .. " drone " .. U.q(name) .. " " .. rest, true) end
+  end,
+}
+ACT.net = {
+  o = function() runOutside(U.q(U.home() .. "/bin/netcfg") .. " test", true) end,
+  a = function() runOutside(U.q(U.home() .. "/bin/netcfg") .. " auto", true) end,
+  z = function() runOutside(U.q(U.home() .. "/bin/netcfg") .. " wizard", true) end,
+}
+ACT.settings = {
+  z = function() runOutside(U.q(U.home() .. "/bin/shulker-setup")) end,
+  u = function() runOutside(U.q(U.home() .. "/bin/shulker") .. " update", true) end,
+  p = function() runOutside(U.q(U.home() .. "/bin/shulker") .. " list", true) end,
+  o = function()
+    if U.exists(U.etcdir() .. "/ssh.enabled") then runOutside(U.q(U.home() .. "/bin/sshctl") .. " off", true)
+    else runOutside(U.q(U.home() .. "/bin/sshctl") .. " on", true) end
+  end,
+  l = function()
+    claudeOn = not claudeOn
+    U.capture(U.q(U.home() .. "/bin/shulker") .. (claudeOn and " enable" or " disable") .. " claude")
+    message = "Claude " .. (claudeOn and "on" or "off") .. " (restart the desktop to update the app list)"
+  end,
+}
+
+---------------------------------------------------------------- main loop
+T.start()
+local ok, err = pcall(function()
+  while true do
+    frame()
+    local filesList
+    if current == "files" then filesList = P.files() else P[current]() end
+    T.flush()
+    local ev = T.event((current == "home" or current == "swarm" or current == "drones") and 5000 or nil)
+    message = ""
+    local target = appAt(ev)
+    if ev.type == "key" and (ev.key == "q" or ev.key == "ctrl-c") then return end
+    if target == "shell" then return end
+    if target == "claude" then runOutside(U.q(U.home() .. "/bin/claude"))
+    elseif target then current = target
+    elseif current == "files" and (ev.type == "key" or ev.type == "button" or ev.type == "click") then
+      local list = filesList
+      local key = ev.key
+      if ev.type == "click" and ev.x > SIDE then
+        local room = T.H - 8
+        local top = math.max(1, filesSel - room + 1)
+        local i = top + (ev.y - 5)
+        if list[i] then if i == filesSel then key = "enter" else filesSel = i end end
+      end
+      if key == "down" then filesSel = math.min(#list, filesSel + 1)
+      elseif key == "up" then filesSel = math.max(1, filesSel - 1)
+      elseif key == "enter" or key == "right" then
+        local e = list[filesSel]
+        if e and e.dir then
+          filesDir = e.name == ".." and (filesDir:match("^(.*)/[^/]+$") or "/") or (filesDir:gsub("/$", "") .. "/" .. e.name)
+          if filesDir == "" then filesDir = "/" end
+          filesSel = 1
+        elseif e then runOutside("less " .. U.q(filesDir:gsub("/$", "") .. "/" .. e.name)) end
+      elseif key == "left" or key == "backspace" then
+        filesDir = filesDir:match("^(.*)/[^/]+$") or "/"
+        if filesDir == "" then filesDir = "/" end
+        filesSel = 1
+      elseif key == "e" then
+        local e = list[filesSel]
+        if e and not e.dir then runOutside("nano " .. U.q(filesDir:gsub("/$", "") .. "/" .. e.name)) end
+      elseif key == "delete" then
+        local e = list[filesSel]
+        if e and e.name ~= ".." then
+          T.at(X, T.H - 4, "Delete " .. e.name .. "? y/N ", "pink")
+          T.flush()
+          local c = T.event()
+          if c.type == "key" and c.key == "y" then os.execute("rm -rf " .. U.q(filesDir:gsub("/$", "") .. "/" .. e.name)) message = "deleted " .. e.name end
+        end
+      end
+    elseif ev.type == "button" or ev.type == "key" then
+      local actions = ACT[current]
+      local f = actions and actions[ev.key]
+      if f then f() end
+    end
+  end
+end)
+T.stop()
+if not ok and not tostring(err):find("interrupted") then io.stderr:write("desktop: " .. tostring(err) .. "\n") os.exit(1) end

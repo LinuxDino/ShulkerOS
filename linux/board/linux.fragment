@@ -1,0 +1,13 @@
+# Shulker Linux kernel additions (on top of board/sedna-riscv64/linux.config)
+# RAID: linear (one big disk), raid0 (striped), raid1 (mirrored) over the drive bays
+CONFIG_MD=y
+CONFIG_BLK_DEV_MD=y
+CONFIG_MD_AUTODETECT=y
+CONFIG_MD_LINEAR=y
+CONFIG_MD_RAID0=y
+CONFIG_MD_RAID1=y
+# a modern file system for big volumes (also mounts ext2/ext3)
+CONFIG_EXT4_FS=y
+# overlays (read-only layer + writable layer) and disk images in files
+CONFIG_OVERLAY_FS=y
+CONFIG_BLK_DEV_LOOP=y
