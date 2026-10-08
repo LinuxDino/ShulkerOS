@@ -1,0 +1,35 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- Runs one scheduled job (called by crond from /etc/shulker/crontabs). Output goes to the job's log.
+local jobs = require("shulker.jobs")
+if arg[1] ~= "run" or not arg[2] then
+  io.stderr:write("usage: shulker-job run ID   (used by crond; see `task job`)\n")
+  os.exit(2)
+end
+-- one run of a job at a time
+local lock = "/tmp/shulker-job-" .. arg[2]:gsub("[^%w]", "") .. ".lock"
+local f = io.open(lock, "r")
+if f then
+  local pid = f:read("l")
+  f:close()
+  if pid and os.execute("kill -0 " .. pid .. " 2>/dev/null") then os.exit(0) end
+end
+local ok, posix = pcall(require, "posix.unistd")
+f = io.open(lock, "w")
+if f then f:write(ok and tostring(posix.getpid()) or "0") f:close() end
+local code = jobs.run(arg[2])
+os.remove(lock)
+os.exit(code)

@@ -1,0 +1,245 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+local U = require("shulker.util")
+local tasks = require("shulker.tasks")
+local jobs = require("shulker.jobs")
+local c = U.c
+
+local USAGE = [==[
+usage: task                         the task list (interactive on a terminal)
+       task add [-p high|medium|low] TEXT    add a task (or start TEXT with ! or !!)
+       task list [open|done|all|WORD]        show tasks (+project, @context, any word)
+       task done N... | undo N | pri N high|medium|low|none
+       task edit N TEXT | rm N | archive (move done tasks to tasks.done.txt)
+       task job                     list scheduled jobs
+       task job add WHEN shell|claude "COMMAND or PROMPT" [--name NAME] [--allow tool,tool]
+       task job rm ID | log ID [LINES] | run ID
+WHEN: in 10m, at 14:30, every 5m, every 2h, daily 09:00, hourly, weekly, or "*/15 * * * *"
+file: ~/.shulker/tasks.txt (todo.txt format). See `man task`.]==]
+
+local function show(filter)
+  local list = tasks.select(filter)
+  if #list == 0 then
+    print(c("dim", filter == "open" and "No open tasks. Add one with: task add Build the reactor" or "No tasks match."))
+    return
+  end
+  for _, t in ipairs(list) do print(tasks.render(t, c)) end
+  local open, done = 0, 0
+  for _, t in ipairs(tasks.load()) do if not t.blank then if t.done then done = done + 1 else open = open + 1 end end end
+  print(c("dim", ("%d open, %d done"):format(open, done)))
+end
+
+---------------------------------------------------------------- interactive list (plain ANSI, no curses)
+local function tui()
+  local sel, msg = 1, "a add  space done  p priority  e edit  d delete  A archive  q quit"
+  local function key()
+    local k = io.read(1)
+    if k == "\27" then
+      local k2 = io.read(1)
+      if k2 == "[" or k2 == "O" then
+        local k3 = io.read(1)
+        return ({ A = "up", B = "down", C = "right", D = "left" })[k3] or "esc"
+      end
+      return "esc"
+    end
+    return k
+  end
+  local function prompt(q)
+    os.execute("stty sane 2>/dev/null")
+    io.write("\27[?25h" .. q) io.flush()
+    local s = io.read("l")
+    os.execute("stty -icanon -echo min 1 2>/dev/null")
+    io.write("\27[?25l")
+    return s
+  end
+  os.execute("stty -icanon -echo min 1 2>/dev/null")
+  io.write("\27[?25l")
+  local ok, e = pcall(function()
+    while true do
+      local list = tasks.select("all")
+      if sel > #list then sel = #list end
+      if sel < 1 then sel = 1 end
+      io.write("\27[H\27[2J")
+      io.write(c("accent", " ▄▄▄ ") .. c("bold", "Tasks") .. c("dim", "  " .. tasks.path()) .. "\n\n")
+      local rows = 18
+      local top = math.max(1, sel - rows + 1)
+      if #list == 0 then io.write(c("dim", "  (empty: press a to add a task)\n")) end
+      for i = top, math.min(#list, top + rows - 1) do
+        local line = tasks.render(list[i], c)
+        io.write((i == sel and c("soft", "> ") or "  ") .. line .. "\n")
+      end
+      io.write("\27[23;1H" .. c("dim", msg))
+      io.flush()
+      local k = key()
+      local t = list[sel]
+      msg = "a add  space done  p priority  e edit  d delete  A archive  q quit"
+      if k == "q" or k == "esc" or k == nil then break
+      elseif k == "up" or k == "k" then sel = sel - 1
+      elseif k == "down" or k == "j" then sel = sel + 1
+      elseif k == "a" then
+        local s = prompt("\27[23;1H\27[2Knew task: ")
+        if s and s:match("%S") then
+          local nt, err = tasks.add(s)
+          msg = nt and ("added #" .. nt.id) or err
+        end
+      elseif t and (k == " " or k == "x") then
+        tasks.update(t.id, { done = not t.done })
+      elseif t and k == "p" then
+        local nextP = ({ A = "medium", B = "low", C = "none" })[t.pri or ""] or "high"
+        tasks.update(t.id, { pri = nextP })
+      elseif t and k == "e" then
+        local s = prompt("\27[23;1H\27[2Kedit #" .. t.id .. " (empty keeps it): ")
+        if s and s:match("%S") then tasks.update(t.id, { text = s }) end
+      elseif t and k == "d" then
+        local s = prompt("\27[23;1H\27[2Kdelete #" .. t.id .. "? [y/N] ")
+        if s and s:lower():match("^y") then tasks.remove(t.id) end
+      elseif k == "A" then
+        msg = ("archived %d done task(s)"):format(tasks.archive())
+      end
+    end
+  end)
+  os.execute("stty sane 2>/dev/null")
+  io.write("\27[?25h\27[H\27[2J")
+  if not ok and not tostring(e):find("interrupted") then error(e, 0) end
+end
+
+---------------------------------------------------------------- jobs
+local function jobCmd(a)
+  local sub = a[2]
+  if not sub or sub == "list" or sub == "ls" then
+    local list = jobs.load()
+    if #list == 0 then print(c("dim", "No scheduled jobs. Example: task job add 'every 1h' shell 'df -h / >> /root/disk.log'")) return end
+    for _, j in ipairs(list) do
+      print(("%s  %s  %s %s%s"):format(c("accent", j.id), c("soft", ("%-20s"):format(j.when or j.schedule)),
+        c(j.kind == "claude" and "info" or "dim", ("%-6s"):format(j.kind)), j.name,
+        j.last_run and c("dim", ("  last %s exit %s"):format(j.last_run, tostring(j.last_exit))) or ""))
+    end
+    print(c("dim", (jobs.crondRunning() and "crond is running" or "crond is NOT running (it starts at boot; `task job` restarts it)") ..
+      ", times are " .. os.date("%Z") .. ", now " .. os.date("%H:%M")))
+    return
+  end
+  if sub == "add" then
+    local when, kind = a[3], a[4]
+    local rest, name, allow = {}, nil, {}
+    local i = 5
+    while i <= #a do
+      if a[i] == "--name" then name = a[i + 1] i = i + 1
+      elseif a[i] == "--allow" then for t in (a[i + 1] or ""):gmatch("[^,%s]+") do allow[#allow + 1] = t end i = i + 1
+      else rest[#rest + 1] = a[i] end
+      i = i + 1
+    end
+    if not when or not kind or #rest == 0 then U.die("usage: task job add WHEN shell|claude \"COMMAND or PROMPT\" [--name NAME] [--allow tool,tool]") end
+    local j, err = jobs.add({ when = when, kind = kind, command = table.concat(rest, " "), name = name, allow = allow })
+    if not j then U.die("task: " .. err) end
+    print(c("ok", ("scheduled %s: %s (%s)"):format(j.id, j.name, j.when)))
+    if kind == "claude" and #allow == 0 then
+      print(c("dim", "Claude jobs can't ask for permission: add --allow run_command (etc.) if the job needs risky tools."))
+    end
+    return
+  end
+  if sub == "rm" or sub == "remove" then
+    local j, err = jobs.remove(a[3] or "")
+    if not j then U.die("task: " .. err) end
+    print("removed " .. j.id .. ": " .. j.name)
+    return
+  end
+  if sub == "log" then
+    local t = jobs.tail(a[3] or "", tonumber(a[4] or "") or 40)
+    print(t ~= "" and t or c("dim", "(nothing logged yet)"))
+    return
+  end
+  if sub == "run" then
+    local code, outp = jobs.run(a[3] or "")
+    io.write(outp)
+    os.exit(code)
+  end
+  U.die("task: unknown job command " .. tostring(sub) .. "\n" .. USAGE)
+end
+
+---------------------------------------------------------------- main
+local a = arg
+local cmd = a[1]
+if not cmd then
+  if U.isatty(0) and U.isatty(1) then tui() else show("open") end
+  os.exit(0)
+end
+if cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(0) end
+
+local function ids(from)
+  local out = {}
+  for i = from, #a do
+    local n = tonumber((a[i]:gsub("^#", "")))
+    if not n then U.die("task: not a task number: " .. a[i]) end
+    out[#out + 1] = n
+  end
+  if #out == 0 then U.die("task: which task? (a number from `task list`)") end
+  -- highest first, so removing doesn't shift the numbers still to come
+  table.sort(out, function(x, y) return x > y end)
+  return out
+end
+
+if cmd == "add" or cmd == "a" then
+  local pri, words, i = nil, {}, 2
+  while i <= #a do
+    if a[i] == "-p" or a[i] == "--priority" then pri = a[i + 1] i = i + 1 else words[#words + 1] = a[i] end
+    i = i + 1
+  end
+  if pri and tasks.priority(pri) == nil then U.die("task: priority is high, medium, low or none") end
+  local t, err = tasks.add(table.concat(words, " "), pri)
+  if not t then U.die("task: " .. err) end
+  print(tasks.render(t, c))
+elseif cmd == "list" or cmd == "ls" or cmd == "l" then
+  show(a[2] or "open")
+elseif cmd == "done" or cmd == "do" or cmd == "undo" then
+  for _, n in ipairs(ids(2)) do
+    local t, err = tasks.update(n, { done = cmd ~= "undo" })
+    if not t then U.die("task: " .. err) end
+    t.id = n
+    print(tasks.render(t, c))
+  end
+elseif cmd == "pri" or cmd == "p" then
+  local n, p = tonumber(a[2] or ""), a[3]
+  if not n or not p then U.die("usage: task pri N high|medium|low|none") end
+  local t, err = tasks.update(n, { pri = p })
+  if not t then U.die("task: " .. err) end
+  t.id = n
+  print(tasks.render(t, c))
+elseif cmd == "edit" or cmd == "e" then
+  local n = tonumber(a[2] or "")
+  local text = table.concat(a, " ", 3)
+  if not n or text == "" then U.die("usage: task edit N NEW TEXT") end
+  local t, err = tasks.update(n, { text = text })
+  if not t then U.die("task: " .. err) end
+  t.id = n
+  print(tasks.render(t, c))
+elseif cmd == "rm" or cmd == "del" or cmd == "remove" then
+  for _, n in ipairs(ids(2)) do
+    local t, err = tasks.remove(n)
+    if not t then U.die("task: " .. err) end
+    print("removed #" .. n .. ": " .. t.text)
+  end
+elseif cmd == "archive" then
+  print(("moved %d done task(s) to %s"):format(tasks.archive(), tasks.donePath()))
+elseif cmd == "tui" or cmd == "ui" then
+  tui()
+elseif cmd == "job" or cmd == "jobs" then
+  jobCmd(a)
+else
+  -- `task Buy cables` is the same as `task add Buy cables`
+  local t, err = tasks.add(table.concat(a, " "))
+  if not t then U.die("task: " .. err) end
+  print(tasks.render(t, c))
+end

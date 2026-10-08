@@ -1,0 +1,13 @@
+man - show Shulker OS manual pages
+
+SYNOPSIS
+  man PAGE
+  man -k WORD
+  man -l
+
+DESCRIPTION
+  Shows a manual page (paged with less when it is longer than the screen).
+  `man -l` lists every page, `man -k WORD` searches their summaries.
+  Pages are plain text files in /opt/shulker/man (or
+  /mnt/builtin/shulker/man) and /usr/local/shulker/man for apps.
+  BusyBox commands have no pages; use `COMMAND --help`.

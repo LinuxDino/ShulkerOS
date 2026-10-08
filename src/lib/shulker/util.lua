@@ -9,6 +9,8 @@ M.VERSION = "0.1.0"
 local HOME
 function M.home() return HOME or os.getenv("SHULKER_HOME") or "/opt/shulker" end
 function M.setHome(h)
+  if h:sub(1, 1) ~= "/" then h = (os.getenv("PWD") or ".") .. "/" .. h:gsub("^%./?", "") end
+  h = h:gsub("/+$", "")
   HOME = h
   local ok, std = pcall(require, "posix.stdlib")
   if ok and std.setenv then std.setenv("SHULKER_HOME", h) end
@@ -168,5 +170,9 @@ function M.c(role, s)
   return "\27[" .. code .. "m" .. s .. "\27[0m"
 end
 function M.setColor(on) COLOR = on end
+function M.colored()
+  if COLOR == nil then COLOR = colorOn() end
+  return COLOR
+end
 
 return M

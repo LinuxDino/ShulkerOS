@@ -15,7 +15,7 @@ What it answers depends on the last user message:
   DROP                       -> the first time, the stream is cut off mid-reply
   REFUSE                     -> stop_reason refusal
   anything else              -> "Hello from mock: <text>"
-  a tool_result              -> "Tool result was: <the result's first 300 characters>"
+  a tool_result              -> "Tool result was: <the result's first 3000 characters>"
 """
 import argparse
 import json
@@ -196,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
             res = tool_result.get("content")
             if isinstance(res, list):
                 res = "".join(x.get("text", "") for x in res)
-            text_block("Tool result was: " + str(res)[:300])
+            text_block("Tool result was: " + str(res)[:3000])
         elif key.startswith("TOOL "):
             parts = key.split(" ", 2)
             name, inp = parts[1], (parts[2] if len(parts) > 2 else "{}")

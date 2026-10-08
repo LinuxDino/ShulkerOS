@@ -1,0 +1,42 @@
+shulker - updates, apps and system checks
+
+SYNOPSIS
+  shulker version
+  shulker update [--check] [--branch NAME]
+  shulker list | search WORD
+  shulker install APP... | remove APP...
+  shulker doctor
+  shulker uninstall [--purge]
+
+DESCRIPTION
+  update     downloads the current Shulker OS from GitHub
+             (github.com/LinuxDino/ShulkerOS) and replaces the files that
+             changed, then updates installed apps. Files are downloaded to
+             /tmp and checked against SHA-256 sums first, and the free disk
+             space is checked before anything is written. Your tasks, jobs,
+             key and settings are kept. --branch switches (and remembers) a
+             branch.
+  list       the apps in the repository; * marks installed ones
+  install    installs apps into /usr/local/shulker/pkg/APP, with commands
+             linked into /usr/local/bin and man pages into
+             /usr/local/shulker/man
+  doctor     checks disk, memory, services, the device bus, the network
+             (netcfg test) and Claude (claude doctor)
+  uninstall  removes Shulker OS from the disk (keeps ~/.shulker unless
+             --purge)
+
+  When Shulker OS runs from the data pack (/mnt/builtin/shulker, read-only),
+  update the data pack instead, or run the installer to put a copy on disk.
+
+APPS
+  cowsay, fortune, matrix, snake, lsbus (see `shulker list`)
+
+SECURITY
+  Downloads use BusyBox wget, whose HTTPS does not verify certificates. The
+  SHA-256 sums come over the same connection, so they catch broken
+  downloads, not a deliberate man-in-the-middle.
+
+FILES
+  /etc/shulker/repo.conf     repo=URL and branch=NAME
+  /opt/shulker/manifest.txt  what is installed
+  /usr/local/shulker/installed

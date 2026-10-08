@@ -1,0 +1,52 @@
+#!/usr/bin/lua
+-- cowsay for Shulker OS: cowsay [-f cow|shulker|creeper] TEXT   (or text on stdin)
+local figure, words = "cow", {}
+local i = 1
+while i <= #arg do
+  if arg[i] == "-f" then figure = arg[i + 1] or figure i = i + 1
+  elseif arg[i] == "-l" then print("cow shulker creeper") os.exit(0)
+  else words[#words + 1] = arg[i] end
+  i = i + 1
+end
+local text = table.concat(words, " ")
+if text == "" then text = (io.read("a") or ""):gsub("%s+$", "") end
+if text == "" then text = "Moo." end
+-- wrap at 38 columns
+local lines, line = {}, ""
+for w in text:gmatch("%S+") do
+  if #line + #w + 1 > 38 and line ~= "" then lines[#lines + 1] = line line = w
+  else line = line == "" and w or (line .. " " .. w) end
+end
+lines[#lines + 1] = line
+local width = 0
+for _, l in ipairs(lines) do width = math.max(width, #l) end
+print(" " .. string.rep("_", width + 2))
+for n, l in ipairs(lines) do
+  local a, b = "|", "|"
+  if #lines == 1 then a, b = "<", ">" elseif n == 1 then a, b = "/", "\\" elseif n == #lines then a, b = "\\", "/" end
+  print(("%s %s%s %s"):format(a, l, string.rep(" ", width - #l), b))
+end
+print(" " .. string.rep("-", width + 2))
+local figures = {
+  cow = [[
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||]],
+  shulker = [[
+        \   +---------+
+         \  |#########|
+            +---------+
+            |  o   o  |
+            |    -    |
+            +---------+]],
+  creeper = [[
+        \   +--------+
+         \  | ##  ## |
+            |   ##   |
+            |  ####  |
+            |  #  #  |
+            +--------+]],
+}
+print(figures[figure] or figures.cow)

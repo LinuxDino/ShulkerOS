@@ -1,0 +1,8 @@
+fortune - print a random saying
+
+SYNOPSIS
+  fortune
+
+DESCRIPTION
+  Prints one random saying about Minecraft, computers and Linux.
+  Pipe it into `cowsay` for extra wisdom.

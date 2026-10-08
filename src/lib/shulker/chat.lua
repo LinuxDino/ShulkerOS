@@ -303,9 +303,11 @@ Ctrl-C cancels a reply in progress.]]
 
 function M:banner()
   local name = api.MODEL_NAMES[self.cfg.model] or self.cfg.model
-  print(c("accent", "  ▄▄▄▄▄  ") .. c("bold", "Claude") .. c("dim", " on Shulker OS"))
-  print(c("accent", "  █") .. c("soft", "▀▀▀") .. c("accent", "█  ") .. c("dim", ("%s · effort %s%s"):format(name, self.cfg.effort, self.cfg.auto and " · auto" or "")))
-  print(c("accent", "  ▀▀▀▀▀  ") .. c("dim", "/help for commands · Ctrl-D to quit"))
+  local lines = require("shulker.art").beside({
+    "", c("bold", "Claude") .. c("dim", " on Shulker OS"),
+    c("dim", ("%s, effort %s%s"):format(name, self.cfg.effort, self.cfg.auto and ", auto (no prompts)" or "")),
+    "", c("dim", "/help for commands, Ctrl-D to quit") }, c, nil, not U.colored())
+  print(table.concat(lines, "\n"))
   print()
 end
 

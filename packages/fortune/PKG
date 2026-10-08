@@ -1,0 +1,4 @@
+version 1.0
+description random sayings about Minecraft and Linux
+file d4dcede369615e0ad3014c642b652a82e76d4411fdf825184fc687798ee8d1b2 1363 bin/fortune
+file fe79b4d287d6ae7566da19b3479494751ae2de02b6f41ea4fb9cd96574158275 172 man/fortune.txt

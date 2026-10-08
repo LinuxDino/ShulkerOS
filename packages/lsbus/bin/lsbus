@@ -1,0 +1,25 @@
+#!/usr/bin/lua
+-- lsbus: OC2 bus devices with their methods. lsbus [DEVICE]   (DEVICE: id or type name)
+for _, d in ipairs({ "/run/oc2/lib/lua", "/mnt/builtin/lib/lua" }) do
+  package.path = d .. "/?.lua;" .. d .. "/?/init.lua;" .. package.path
+end
+local ok, bus = pcall(require, "devices")
+if not ok then io.stderr:write("lsbus: no device bus (" .. tostring(bus) .. ")\n") os.exit(1) end
+local P, L, D, N = "\27[35m", "\27[95m", "\27[90m", "\27[0m"
+if os.execute("[ -t 1 ]") ~= true then P, L, D, N = "", "", "", "" end
+local want = arg[1]
+for _, dev in ipairs(bus:list()) do
+  table.sort(dev.typeNames)
+  local match = not want or dev.deviceId == want
+  for _, t in ipairs(dev.typeNames) do if t == want then match = true end end
+  if match then
+    print(P .. table.concat(dev.typeNames, ", ") .. N .. "  " .. D .. dev.deviceId .. N)
+    local okM, methods = pcall(bus.methods, bus, dev.deviceId)
+    for _, m in ipairs(okM and methods or {}) do
+      local ps = {}
+      for i, p in ipairs(m.parameters or {}) do ps[#ps + 1] = (p.name or ("arg" .. i)) .. (p.type and (":" .. p.type) or "") end
+      print(("  %s%s%s(%s)%s"):format(L, m.name, N, table.concat(ps, ", "), m.returnType and (" -> " .. m.returnType) or ""))
+      if want and m.description then print("      " .. D .. m.description .. N) end
+    end
+  end
+end

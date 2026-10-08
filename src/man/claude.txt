@@ -1,0 +1,88 @@
+claude - chat with Claude in the terminal
+
+SYNOPSIS
+  claude [-c] [-m opus|sonnet] [-e EFFORT] [--auto]
+  claude -p "PROMPT" [--allow TOOL,...]        (stdin is appended when piped)
+  claude key [--forget]
+  claude config [KEY [VALUE]]
+  claude doctor
+
+DESCRIPTION
+  A native client for the Claude Messages API, written in Lua for Sedna
+  Linux (real Claude Code needs Node.js, which Sedna doesn't have). Replies
+  stream in as they are written. Claude can use tools on this computer:
+
+    run_command     run a shell command              asks first
+    read_file       read a file
+    write_file      create or overwrite a file       asks first
+    edit_file       replace text in a file           asks first
+    list_dir        list a directory
+    system_info     memory, disk, network, services
+    network_info    addresses, routes, DNS, gateway ping
+    list_devices    OC2 bus devices (any mod)
+    device_methods  a device's methods
+    call_device     call a device method             asks first
+    task_list, task_add, task_update                 your to-do list
+    task_remove                                      asks first
+    job_list, job_log                                scheduled jobs
+    job_add, job_remove                              asks first
+
+  Before a risky tool runs you are asked: [y]es, [a]lways (for this tool,
+  this session) or [n]o. /auto on (or --auto) skips the questions.
+
+INTERACTIVE COMMANDS
+  /model opus|sonnet    claude-opus-5-5 (default) or claude-sonnet-5-5
+  /effort LEVEL         low, medium (default), high, xhigh, max
+  /thinking MODE        updates (short progress notes, default), summarized
+                        (summaries of Claude's reasoning), omitted
+  /auto on|off          run tools without asking
+  /clear                start a new conversation
+  /cost                 tokens used and estimated cost
+  /tools, /key, /help, /exit (or Ctrl-D)
+  A line ending in \ continues; """ starts and ends a multi-line block.
+  Ctrl-C cancels a reply.
+
+ONE-SHOT USE
+  `claude -p "what uses the most disk space?"`
+  `dmesg | tail -n 30 | claude -p "anything wrong here?"`
+  Without a terminal (pipes, cron) risky tools are refused unless listed
+  with --allow, e.g. --allow run_command. Exit status is 1 on errors.
+
+SETUP
+  You need an Anthropic API key from console.anthropic.com (API use is billed
+  to it; a Claude.ai subscription does not work here). `claude key` stores it
+  in ~/.shulker/claude/key with mode 600, or set ANTHROPIC_API_KEY.
+
+SECURITY
+  Sedna's HTTPS (BusyBox ssl_client) does NOT verify certificates: there is
+  no CA bundle. Traffic is encrypted, but the client cannot prove it reached
+  the real api.anthropic.com. To narrow this, Shulker OS only connects to
+  Anthropic's published fixed address range 160.79.104.0/23: DNS answers
+  outside it are ignored and 160.79.104.10 is used instead, so fake DNS
+  can't redirect the key, and it works with no name server at all. Someone
+  who can intercept traffic on the way (between the Minecraft server and
+  Anthropic) can still read the key. The key also sits on this computer's
+  disk, which is part of the world save: the server owner can read it.
+  So: use a key with a low spend limit, and revoke it if in doubt.
+  The request (with the key) is written only to /tmp (RAM, mode 600) and
+  handed to ssl_client on stdin: it never appears in `ps`.
+  `claude config pin off` disables the address check (not recommended).
+
+SLOW OR DROPPED CONNECTIONS
+  Replies stream, so a long answer keeps the connection busy. If nothing
+  arrives for idle_timeout seconds (default 180) or the gateway drops the
+  connection, the request is retried (retries, default 4), as are HTTP 429,
+  5xx and overloaded errors, waiting as the API asks. A turn that fails is
+  undone so the conversation stays valid; actions already run stay done.
+
+OPTIONS (claude config KEY VALUE)
+  model, effort, thinking, auto (on/off), max_tokens (32000),
+  idle_timeout (180), retries (4), pin (on/off), api_url
+
+FILES
+  ~/.shulker/claude/key          the API key (mode 600)
+  ~/.shulker/claude/config.json  options
+  ~/.shulker/claude/session.json the last conversation (claude -c), if small
+
+SEE ALSO
+  task(1), `claude doctor`, netcfg(1)

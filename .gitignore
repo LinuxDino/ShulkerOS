@@ -1,4 +1,5 @@
-/dist/
-/work/
 *.run
+/dist/
+/work
+/work/
 __pycache__/

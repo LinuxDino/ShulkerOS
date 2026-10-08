@@ -1,0 +1,91 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- man: Shulker OS manual pages (plain text in $SHULKER_HOME/man and /usr/local/shulker/man)
+local U = require("shulker.util")
+local c = U.c
+
+local DIRS = { U.home() .. "/man", "/usr/local/shulker/man" }
+
+local function pages()
+  local out = {}
+  for _, d in ipairs(DIRS) do
+    local list = U.capture("ls " .. U.q(d) .. " 2>/dev/null")
+    for name in list:gmatch("(%S+)%.txt") do
+      if not out[name] then out[name] = d .. "/" .. name .. ".txt" out[#out + 1] = name end
+    end
+  end
+  table.sort(out)
+  return out
+end
+
+local function summary(path)
+  local first = (U.read(path) or ""):match("^[^\n]*") or ""
+  return first:match("^%S+%s+%-%s+(.*)$") or first
+end
+
+local function render(text)
+  local out = {}
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    if line:match("^[A-Z][A-Z %-]+$") then
+      out[#out + 1] = c("accent", c("bold", line))
+    else
+      -- `commands` in lavender
+      out[#out + 1] = (line:gsub("`([^`]+)`", function(s) return c("soft", s) end))
+    end
+  end
+  return table.concat(out, "\n")
+end
+
+local a = arg[1]
+if not a or a == "-h" or a == "--help" then
+  print("usage: man PAGE        show a manual page")
+  print("       man -k WORD     search page summaries")
+  print("       man -l          list all pages")
+  print("Start with: man intro")
+  os.exit(a and 0 or 1)
+end
+
+local all = pages()
+if a == "-l" or a == "-k" then
+  local word = (arg[2] or ""):lower()
+  for _, name in ipairs(all) do
+    local s = summary(all[name])
+    if a == "-l" or name:lower():find(word, 1, true) or s:lower():find(word, 1, true) then
+      print(("%s %s"):format(c("soft", ("%-14s"):format(name)), s))
+    end
+  end
+  os.exit(0)
+end
+
+local name = a:gsub("%(%d%)$", "")
+if arg[2] and not all[name] then name = arg[2] end   -- `man 1 claude`
+local path = all[name]
+if not path then
+  io.stderr:write(("No manual entry for %s.\n"):format(name))
+  if U.which(name) then io.stderr:write(("Try `%s --help` (BusyBox commands have built-in help).\n"):format(name)) end
+  io.stderr:write("`man -l` lists the Shulker OS pages.\n")
+  os.exit(16)
+end
+
+local text = render(U.read(path) or "")
+if U.isatty(1) and select(2, text:gsub("\n", "")) > 22 then
+  local tmp = os.tmpname()
+  U.write(tmp, text .. "\n")
+  os.execute("less -R " .. U.q(tmp) .. " 2>/dev/null || more " .. U.q(tmp))
+  os.remove(tmp)
+else
+  print(text)
+end

@@ -1,0 +1,57 @@
+#!/usr/bin/lua
+-- snake: eat the purple chorus fruit. Arrow keys or WASD, q quits.
+local okP, P = pcall(function() return { poll = require("posix.poll"), unistd = require("posix.unistd") } end)
+if not okP then io.stderr:write("snake needs luaposix\n") os.exit(1) end
+local W, H = 40, 18
+local snake, dir, grow, score = { { x = 10, y = 9 }, { x = 9, y = 9 }, { x = 8, y = 9 } }, { 1, 0 }, 0, 0
+math.randomseed(os.time())
+local food
+local function place()
+  while true do
+    local f = { x = math.random(2, W - 1), y = math.random(2, H - 1) }
+    local free = true
+    for _, s in ipairs(snake) do if s.x == f.x and s.y == f.y then free = false end end
+    if free then food = f return end
+  end
+end
+place()
+local function at(x, y, s) return ("\27[%d;%dH%s"):format(y + 1, x * 2 - 1, s) end
+local function draw()
+  local out = { "\27[H\27[2J\27[35m" }
+  for x = 1, W do out[#out + 1] = at(x, 1, "##") out[#out + 1] = at(x, H, "##") end
+  for y = 1, H do out[#out + 1] = at(1, y, "##") out[#out + 1] = at(W, y, "##") end
+  out[#out + 1] = "\27[95m" .. at(food.x, food.y, "<>")
+  for i, s in ipairs(snake) do out[#out + 1] = (i == 1 and "\27[97m" or "\27[95m") .. at(s.x, s.y, i == 1 and "@@" or "[]") end
+  out[#out + 1] = ("\27[0m\27[%d;1Hscore %d   arrows/WASD to steer, q to quit"):format(H + 2, score)
+  io.write(table.concat(out))
+  io.flush()
+end
+local function readKey()
+  local n = P.poll.rpoll(0, 180)
+  if not n or n == 0 then return nil end
+  local s = P.unistd.read(0, 8) or ""
+  if s:find("\27%[A") or s == "w" then return "up" end
+  if s:find("\27%[B") or s == "s" then return "down" end
+  if s:find("\27%[C") or s == "d" then return "right" end
+  if s:find("\27%[D") or s == "a" then return "left" end
+  if s == "q" then return "quit" end
+end
+os.execute("stty -icanon -echo min 0 2>/dev/null")
+io.write("\27[?25l")
+local ok, err = pcall(function()
+  while true do
+    draw()
+    local k = readKey()
+    if k == "quit" then break end
+    if k == "up" and dir[2] == 0 then dir = { 0, -1 } elseif k == "down" and dir[2] == 0 then dir = { 0, 1 }
+    elseif k == "left" and dir[1] == 0 then dir = { -1, 0 } elseif k == "right" and dir[1] == 0 then dir = { 1, 0 } end
+    local head = { x = snake[1].x + dir[1], y = snake[1].y + dir[2] }
+    if head.x <= 1 or head.x >= W or head.y <= 1 or head.y >= H then break end
+    for _, s in ipairs(snake) do if s.x == head.x and s.y == head.y then error("bit", 0) end end
+    table.insert(snake, 1, head)
+    if head.x == food.x and head.y == food.y then score = score + 1 grow = grow + 2 place() end
+    if grow > 0 then grow = grow - 1 else table.remove(snake) end
+  end
+end)
+os.execute("stty sane 2>/dev/null")
+io.write(("\27[0m\27[?25h\27[%d;1H\nGame over. Score: %d\n"):format(H + 2, score))

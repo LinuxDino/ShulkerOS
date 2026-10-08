@@ -1,0 +1,9 @@
+snake - the classic game, in shulker colours
+
+SYNOPSIS
+  snake
+
+DESCRIPTION
+  Steer the snake with the arrow keys or W A S D and eat the chorus fruit
+  (<>). Each one makes you longer. Hitting the wall or yourself ends the
+  game. q quits.

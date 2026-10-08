@@ -1,0 +1,48 @@
+#!/bin/sh
+# Shulker OS boot script: /etc/init.d/S95shulker (disk install) or init.d/S60shulker (data pack).
+# Starts crond with Shulker's persistent crontabs, sshd if enabled, and keeps the login branding.
+
+find_home() {
+	for d in /opt/shulker /mnt/builtin/shulker; do
+		if [ -f "$d/lib/shulker/util.lua" ]; then echo "$d"; return; fi
+	done
+}
+SHULKER_HOME=${SHULKER_HOME:-$(find_home)}
+[ -n "$SHULKER_HOME" ] || exit 0
+ETC=/etc/shulker
+
+start() {
+	mkdir -p "$ETC/crontabs"
+	# login shell setup and branding (kept current across updates)
+	if [ -d /etc/profile.d ] && ! cmp -s "$SHULKER_HOME/etc/profile.sh" /etc/profile.d/shulker.sh 2>/dev/null; then
+		cp "$SHULKER_HOME/etc/profile.sh" /etc/profile.d/shulker.sh 2>/dev/null
+	fi
+	if [ ! -f "$ETC/no-branding" ]; then
+		cmp -s "$SHULKER_HOME/share/issue" /etc/issue 2>/dev/null || cp "$SHULKER_HOME/share/issue" /etc/issue 2>/dev/null
+		cmp -s "$SHULKER_HOME/share/motd" /etc/motd 2>/dev/null || cp "$SHULKER_HOME/share/motd" /etc/motd 2>/dev/null
+	fi
+	# scheduled jobs
+	if ! pidof crond >/dev/null 2>&1; then
+		printf 'Starting crond (Shulker jobs): '
+		crond -b -c "$ETC/crontabs" -L /tmp/crond.log && echo OK || echo FAIL
+	fi
+	# ssh (sshctl on)
+	if [ -f "$ETC/ssh.enabled" ] && [ -x /etc/init.d/dropbear ] && ! pidof dropbear >/dev/null 2>&1; then
+		/etc/init.d/dropbear start
+	fi
+	ver=$(cat "$SHULKER_HOME/VERSION" 2>/dev/null)
+	[ -f "$SHULKER_HOME/share/banner" ] && printf "$(cat "$SHULKER_HOME/share/banner")\n" "$ver"
+}
+
+stop() {
+	pidof crond >/dev/null 2>&1 && killall crond 2>/dev/null
+	return 0
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

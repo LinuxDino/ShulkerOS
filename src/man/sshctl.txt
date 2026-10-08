@@ -1,0 +1,17 @@
+sshctl - turn the SSH server on or off
+
+SYNOPSIS
+  sshctl [status]
+  sshctl on | off
+  sshctl key 'ssh-ed25519 AAAA... you@host'
+
+DESCRIPTION
+  Starts Sedna's Dropbear SSH server and keeps it on across reboots (the
+  flag is /etc/shulker/ssh.enabled). Dropbear refuses empty passwords, so
+  `sshctl on` asks you to set a root password first unless you added a key.
+  The host key is generated on the first connection, which takes a while on
+  the emulated CPU.
+
+  The Internet Gateway only connects outwards, so SSH is for other computers
+  on the same in-game network: `ssh root@10.0.0.2` (and scp) from another
+  OC2 computer.

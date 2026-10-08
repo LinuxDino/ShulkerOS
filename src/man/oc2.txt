@@ -1,0 +1,26 @@
+oc2 - the OpenComputers II side of this computer
+
+DEVICE BUS
+  Blocks next to the computer (and cards in it) are reached through the
+  device bus. OC2's high level API is the Lua library `devices`:
+    local devices = require("devices")
+    for _, d in ipairs(devices:list()) do print(d.deviceId, d.typeNames[1]) end
+    local rs = devices:find("redstone")
+    rs:setRedstoneOutput("up", 15)
+  `lsdev.lua` lists devices, `lsbus` (shulker install lsbus) shows their
+  methods, and Claude has list_devices, device_methods and call_device.
+  The bus daemon oc2busd lets several programs use the bus at once.
+
+BUILT-IN FILES
+  /mnt/builtin is a read-only file system the mod provides (data packs can
+  add files to it). Its bin directory is on the PATH and its init.d scripts
+  run at boot:
+    lsdev.lua            list bus devices
+    import.lua [NAME]    receive a file from your real computer (needs the
+                         File Import/Export card; a file dialog opens)
+    export.lua FILE      send a file to your real computer
+    setup-network.lua    interactive network setup (see netcfg)
+    redstone.lua         small redstone example
+
+THE INTERNET
+  Needs an Internet Gateway, network connector and network card: `man netcfg`.

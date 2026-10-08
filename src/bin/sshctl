@@ -1,0 +1,42 @@
+#!/bin/sh
+# sshctl: the Dropbear SSH server, made easy. On OC2 the Internet Gateway only connects outwards,
+# so SSH is for other computers on the same in-game network (ssh root@10.0.0.2 from one of them).
+
+ETC=/etc/shulker
+FLAG=$ETC/ssh.enabled
+G=$(printf '\033[92m') Y=$(printf '\033[93m') Rd=$(printf '\033[91m') N=$(printf '\033[0m')
+[ -t 1 ] || { G= Y= Rd= N=; }
+
+running() { pidof dropbear >/dev/null 2>&1; }
+nopass() { grep -q '^root::' /etc/shadow 2>/dev/null; }
+haskeys() { [ -s /root/.ssh/authorized_keys ]; }
+
+case "$1" in
+	on|enable|start)
+		mkdir -p "$ETC"
+		if nopass && ! haskeys; then
+			echo "${Y}root has no password and no authorized key.${N} Dropbear refuses empty passwords,"
+			echo "so set one now (or add a key with: sshctl key 'ssh-ed25519 AAAA...')."
+			passwd root || exit 1
+		fi
+		touch "$FLAG"
+		running || /etc/init.d/dropbear start
+		ip=$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+		echo "${G}SSH is on${N} and starts at every boot. From another computer: ssh root@${ip:-<this address>}"
+		echo "(The first connection is slow: the host key is generated on the emulated CPU.)" ;;
+	off|disable|stop)
+		rm -f "$FLAG"
+		running && /etc/init.d/dropbear stop
+		echo "SSH is off and won't start at boot." ;;
+	key)
+		[ -n "$2" ] || { echo "usage: sshctl key 'ssh-ed25519 AAAA... you@host'"; exit 1; }
+		mkdir -p /root/.ssh && chmod 700 /root/.ssh
+		echo "$2" >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+		echo "key added to /root/.ssh/authorized_keys" ;;
+	""|status)
+		if running; then echo "dropbear: ${G}running${N}"; else echo "dropbear: ${Rd}stopped${N}"; fi
+		if [ -f "$FLAG" ]; then echo "at boot:  on"; else echo "at boot:  off"; fi
+		if nopass; then echo "root:     ${Y}no password${N}"; else echo "root:     password set"; fi
+		if haskeys; then echo "keys:     $(wc -l < /root/.ssh/authorized_keys) authorized"; else echo "keys:     none"; fi ;;
+	*) echo "usage: sshctl on|off|status|key 'PUBLIC KEY'   (man sshctl)"; exit 1 ;;
+esac

@@ -1,0 +1,4 @@
+version 1.0
+description list OC2 bus devices with their methods
+file 5d71bda07336d77b6db4edf83fc6d7ebe0573f9ddeb1ff5e06d2f57a5dc14b6d 1326 bin/lsbus
+file 8dc3a9b0c3880a650abf4f6fe2d78bf604d19a17af41cb92679ec1cecf750ab3 420 man/lsbus.txt

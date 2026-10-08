@@ -1,0 +1,128 @@
+#!/bin/sh
+# netcfg: persistent network setup for an OC2 computer behind an Internet Gateway.
+# Writes the eth0 stanza of /etc/network/interfaces (so it survives reboots) and brings eth0 up.
+# There is no DHCP or DNS behind the gateway: the address is static and a public name server is used.
+
+IFACES=${NETCFG_INTERFACES:-/etc/network/interfaces}
+IF=${NETCFG_IF:-eth0}
+P=$(printf '\033[35m') L=$(printf '\033[95m') G=$(printf '\033[92m') Rd=$(printf '\033[91m') D=$(printf '\033[90m') N=$(printf '\033[0m')
+[ -t 1 ] || { P= L= G= Rd= D= N=; }
+
+usage() {
+	cat <<USAGE
+usage: netcfg                       show the network status
+       netcfg auto                  10.0.0.2/24, gateway 10.0.0.1, DNS 1.1.1.1 (works with any gateway)
+       netcfg static IP/BITS [GATEWAY [DNS]]   e.g. netcfg static 10.0.0.5/24 10.0.0.1 9.9.9.9
+       netcfg dhcp                  get an address from a DHCP server on the in-game network
+       netcfg wizard                OC2's interactive setup-network.lua (also offers a DHCP server)
+       netcfg off                   remove the eth0 setup
+       netcfg test                  check gateway, DNS, Anthropic API and GitHub reachability
+see \`man netcfg\`
+USAGE
+}
+
+# drop the existing stanza for $IF (auto line, iface block and its indented options)
+strip_iface() {
+	[ -f "$IFACES" ] || { mkdir -p "$(dirname "$IFACES")"; printf 'auto lo\niface lo inet loopback\n' > "$IFACES"; }
+	awk -v ifc="$IF" '
+		$1 == "auto" && $2 == ifc { next }
+		$1 == "iface" { skip = ($2 == ifc) }
+		/^[ \t]/ && skip { next }
+		$1 != "iface" && !/^[ \t]/ { skip = 0 }
+		!skip { print }
+	' "$IFACES" > "$IFACES.tmp" && mv "$IFACES.tmp" "$IFACES"
+	# no trailing blank lines pile-up
+	sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$IFACES"
+}
+
+apply() {
+	ifdown "$IF" >/dev/null 2>&1
+	ip addr flush dev "$IF" >/dev/null 2>&1
+	if ifup "$IF"; then
+		echo "${G}$IF is up.${N} Saved in $IFACES (kept across reboots)."
+	else
+		echo "${Rd}ifup $IF failed${N} (is a network card installed?)"
+		return 1
+	fi
+}
+
+valid_ip() { echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
+
+prefix_to_mask() {
+	b=$1 m= i=0
+	while [ $i -lt 4 ]; do
+		if [ "$b" -ge 8 ]; then o=255; b=$((b - 8)); else o=$((256 - (1 << (8 - b)))); [ "$b" -le 0 ] && o=0; b=0; fi
+		m="$m${m:+.}$o"; i=$((i + 1))
+	done
+	echo "$m"
+}
+
+static() {
+	addr=${1%/*} bits=24
+	case "$1" in */*) bits=${1#*/} ;; esac
+	valid_ip "$addr" || { echo "netcfg: bad address $1"; exit 1; }
+	case "$bits" in ''|*[!0-9]*) echo "netcfg: bad prefix /$bits"; exit 1 ;; esac
+	[ "$bits" -ge 1 ] && [ "$bits" -le 30 ] || { echo "netcfg: prefix must be /1 to /30"; exit 1; }
+	gw=${2:-${addr%.*}.1}
+	[ "$gw" = "$addr" ] && gw=${addr%.*}.254
+	dns=${3:-1.1.1.1}
+	[ "$gw" = "-" ] || valid_ip "$gw" || { echo "netcfg: bad gateway $gw"; exit 1; }
+	valid_ip "$dns" || { echo "netcfg: bad name server $dns"; exit 1; }
+	strip_iface
+	{
+		echo ""
+		echo "auto $IF"
+		echo "iface $IF inet static"
+		echo "  address $addr"
+		echo "  netmask $(prefix_to_mask "$bits")"
+		[ "$gw" = "-" ] || echo "  gateway $gw"
+		echo "  up echo 'nameserver $dns' > /etc/resolv.conf"
+	} >> "$IFACES"
+	echo "address ${L}$addr/$bits${N}, gateway ${L}$gw${N}, name server ${L}$dns${N}"
+	apply
+}
+
+status() {
+	echo "${P}Interfaces${N}"
+	ip -4 -o addr show 2>/dev/null | awk '{printf "  %-6s %s\n", $2, $4}'
+	r=$(ip route | awk '/^default/ {print $3; exit}')
+	echo "${P}Gateway${N}     ${r:-${Rd}none${N} (run: netcfg auto)}"
+	echo "${P}DNS${N}         $(awk '/^nameserver/ {printf "%s ", $2}' /etc/resolv.conf 2>/dev/null)"
+	if grep -q "iface $IF" "$IFACES" 2>/dev/null; then
+		echo "${P}Saved${N}       $(grep "iface $IF" "$IFACES") in $IFACES"
+	else
+		echo "${P}Saved${N}       ${D}nothing for $IF yet${N}"
+	fi
+}
+
+check() { if eval "$2" >/dev/null 2>&1; then echo "  ${G}ok${N}    $1"; else echo "  ${Rd}FAIL${N}  $1${3:+  ${D}($3)${N}}"; fi; }
+
+nettest() {
+	r=$(ip route | awk '/^default/ {print $3; exit}')
+	check "eth0 has an address" "ip -4 addr show $IF | grep -q inet" "netcfg auto"
+	check "default route${r:+ via $r}" "[ -n '$r' ]" "netcfg auto"
+	[ -n "$r" ] && check "gateway answers ping" "ping -c 1 -W 3 $r" "Internet Gateway placed, powered and on the same network connector?"
+	check "DNS resolves github.com" "nslookup raw.githubusercontent.com" "name server in /etc/resolv.conf"
+	check "Anthropic API reachable (160.79.104.10:443)" "nc -z -w 8 160.79.104.10 443" "the server may block it"
+	check "HTTPS to GitHub (wget)" "wget -q -T 15 -O /dev/null https://raw.githubusercontent.com/LinuxDino/ShulkerOS/main/README.md"
+}
+
+case "$1" in
+	""|status) status ;;
+	auto) static 10.0.0.2/24 10.0.0.1 "${2:-1.1.1.1}" ;;
+	static) shift; [ -n "$1" ] || { usage; exit 1; }; static "$@" ;;
+	dhcp)
+		strip_iface
+		printf '\nauto %s\niface %s inet dhcp\n' "$IF" "$IF" >> "$IFACES"
+		apply ;;
+	wizard)
+		strip_iface
+		if command -v setup-network.lua >/dev/null 2>&1; then setup-network.lua; else echo "setup-network.lua not found (is /mnt/builtin mounted?)"; exit 1; fi ;;
+	off)
+		ifdown "$IF" >/dev/null 2>&1
+		strip_iface
+		echo "removed the $IF setup" ;;
+	test) nettest ;;
+	-h|--help|help) usage ;;
+	*) usage; exit 1 ;;
+esac

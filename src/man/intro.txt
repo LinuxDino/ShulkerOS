@@ -1,0 +1,35 @@
+intro - welcome to Shulker OS
+
+WHAT THIS IS
+  Shulker OS turns the Sedna Linux that OpenComputers II computers boot into
+  a friendlier Linux, with Claude built in. It is a set of small Lua and shell
+  programs on top of Sedna's BusyBox: nothing of Sedna is replaced.
+
+FIRST STEPS
+  1. Connect to the internet (needs an Internet Gateway, a network connector
+     and a network card):  `netcfg auto`  then  `netcfg test`
+  2. Talk to Claude:  `claude`   (the first run asks for an API key and shows
+     a security warning you should read)
+  3. Keep a to-do list:  `task add Build the reactor`, `task`
+  4. Look around:  `shulkerfetch`, `shulker list`, `man -l`
+
+COMMANDS
+  claude         chat with Claude, or `claude -p "question"` for one answer
+  task           to-do list (todo.txt) and scheduled jobs (`task job`)
+  shulker        update Shulker OS, install and remove apps, `shulker doctor`
+  shulkerfetch   system information with the logo
+  netcfg         network setup that survives reboots
+  sshctl         turn the SSH server on or off
+  man            these pages: `man -l` lists them, `man -k WORD` searches
+
+THE MACHINE
+  An emulated 64-bit RISC-V CPU (slow), a few tens of MB of RAM and an 8 MB
+  root disk with about a megabyte free. /tmp and /var/log live in RAM and are
+  cleared on reboot. OC2's own tools are in /mnt/builtin/bin: lsdev.lua,
+  import.lua and export.lua (file transfer card), setup-network.lua. See
+  `man oc2`.
+
+FILES
+  /opt/shulker            Shulker OS (or /mnt/builtin/shulker from the data pack)
+  ~/.shulker              your API key, tasks, jobs and logs
+  /etc/shulker            system settings (crontabs, repo.conf, profile.local)

@@ -54,7 +54,7 @@ class Sedna:
         return self
 
     def login(self):
-        self.child.expect("login:", timeout=180)
+        self.child.expect(r"(?m)^\r*[\w-]+ login: ", timeout=180)
         self.child.sendline("root")
         self.child.expect([r"# ", r"\$ "], timeout=60)
         self.raw_shell()

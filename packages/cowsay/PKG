@@ -1,0 +1,4 @@
+version 1.0
+description a talking cow, shulker or creeper
+file a64aa7334c87d7b95175f78a0ad8b6087aa64139e6a168fc1f155f236d0fe283 1655 bin/cowsay
+file cabcd802f2ef093b8675aa1eaf699bf4565d4d08c33876bbae51090e4c1726f0 298 man/cowsay.txt

@@ -1,0 +1,5 @@
+cowsay 1.0 a talking cow, shulker or creeper
+fortune 1.0 random sayings about Minecraft and Linux
+matrix 1.0 purple digital rain for the terminal
+snake 1.0 the classic snake game
+lsbus 1.0 list OC2 bus devices with their methods

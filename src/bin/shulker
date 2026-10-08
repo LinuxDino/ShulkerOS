@@ -1,0 +1,133 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- shulker: Shulker OS updates, apps and system checks
+local U = require("shulker.util")
+local pkg = require("shulker.pkg")
+local c = U.c
+
+local USAGE = [==[
+usage: shulker version                 version, where it's installed, repository
+       shulker update [--check] [--branch NAME]   update Shulker OS (and installed apps)
+       shulker list                    apps in the repository (* = installed)
+       shulker search WORD             search apps
+       shulker install APP...          install apps (to /usr/local/shulker)
+       shulker remove APP...           remove apps
+       shulker doctor                  check disk, services, network and Claude
+       shulker uninstall [--purge]     remove Shulker OS from this disk (--purge: also ~/.shulker)
+see `man shulker`]==]
+
+local function progress(i, n, path)
+  if U.isatty(1) then io.write(("\r%s %d/%d %s\27[K"):format(c("accent", "downloading"), i, n, path)) io.flush() end
+end
+local function done() if U.isatty(1) then io.write("\r\27[K") end end
+
+local a = arg
+local cmd = a[1]
+if not cmd or cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(cmd and 0 or 1) end
+
+if cmd == "version" or cmd == "-v" or cmd == "--version" then
+  local conf = pkg.conf()
+  print(("Shulker OS %s"):format(U.trim(U.read(U.home() .. "/VERSION") or U.VERSION)))
+  print(c("dim", ("home %s (%s), repository %s branch %s"):format(U.home(),
+    U.home():find("^/mnt/builtin") and "data pack, read-only" or "disk", conf.repo, conf.branch)))
+elseif cmd == "update" or cmd == "upgrade" then
+  local opts = { progress = progress }
+  local i = 2
+  while i <= #a do
+    if a[i] == "--check" then opts.check = true
+    elseif a[i] == "--branch" then opts.branch = a[i + 1] i = i + 1
+    else U.die("shulker: unknown option " .. a[i]) end
+    i = i + 1
+  end
+  print(c("dim", "checking " .. pkg.base(opts.branch) .. " ..."))
+  local info, err = pkg.update(opts)
+  done()
+  if not info then U.die("shulker: " .. err) end
+  if info.changed == 0 then
+    print(c("ok", ("Shulker OS %s is up to date."):format(info.current)))
+  elseif opts.check then
+    print(c("warn", ("Update available: %s -> %s (%d file%s). Run: shulker update"):format(info.current, info.latest, info.changed, info.changed == 1 and "" or "s")))
+  else
+    print(c("ok", ("Updated Shulker OS %s -> %s (%d file%s)."):format(info.current, info.latest, info.changed, info.changed == 1 and "" or "s")))
+    print(c("dim", "Open a new shell (or log in again) to pick up profile changes."))
+  end
+  if not opts.check then
+    for _, name in ipairs(pkg.installed()) do
+      local ver, perr = pkg.installPkg(name, progress)
+      done()
+      print(ver and (c("ok", "updated ") .. name .. " " .. ver) or c("err", name .. ": " .. tostring(perr)))
+    end
+  end
+elseif cmd == "list" or cmd == "search" then
+  local idx, err = pkg.index()
+  if not idx then U.die("shulker: " .. err) end
+  local inst = pkg.installed()
+  local word = cmd == "search" and (a[2] or ""):lower() or nil
+  for _, p in ipairs(idx) do
+    if not word or p.name:find(word, 1, true) or p.description:lower():find(word, 1, true) then
+      print(("%s %s %s %s"):format(inst[p.name] and c("ok", "*") or " ", c("soft", ("%-12s"):format(p.name)),
+        c("dim", ("%-6s"):format(p.version)), p.description))
+    end
+  end
+elseif cmd == "install" or cmd == "add" then
+  if not a[2] then U.die("usage: shulker install APP...") end
+  for i = 2, #a do
+    local ver, err = pkg.installPkg(a[i], progress)
+    done()
+    if not ver then U.die("shulker: " .. err) end
+    print(c("ok", "installed ") .. a[i] .. " " .. ver .. c("dim", "  (man " .. a[i] .. ")"))
+  end
+elseif cmd == "remove" or cmd == "rm" then
+  if not a[2] then U.die("usage: shulker remove APP...") end
+  for i = 2, #a do
+    local ok, err = pkg.removePkg(a[i])
+    if not ok then U.die("shulker: " .. err) end
+    print("removed " .. a[i])
+  end
+elseif cmd == "doctor" then
+  local function line(ok, text) print((ok == true and c("ok", " ok ") or ok == false and c("err", "FAIL") or c("warn", "warn")) .. "  " .. text) end
+  local free = pkg.freeKB("/")
+  local diskOk = false
+  if free and free > 256 then diskOk = true elseif free and free > 64 then diskOk = nil end
+  line(diskOk, ("disk /: %s KB free"):format(tostring(free)))
+  local mem = U.capture("awk '/MemAvailable/ {print $2}' /proc/meminfo")
+  line(tonumber(mem) and tonumber(mem) > 8192 or nil, ("memory: %s KB available"):format(U.trim(mem)))
+  line(U.exists("/etc/profile.d/shulker.sh"), "login profile /etc/profile.d/shulker.sh")
+  line(require("shulker.jobs").crondRunning(), "crond (scheduled jobs)")
+  line(U.isdir("/mnt/builtin/bin"), "OC2 built-in files at /mnt/builtin")
+  local ok, devices = pcall(require, "shulker.devices")
+  local list, derr = ok and devices.list()
+  line(list ~= nil and list ~= false or nil, list and (#list .. " device(s) on the OC2 bus") or ("device bus: " .. tostring(derr)))
+  print(c("accent", "network:"))
+  os.execute(U.q(U.home() .. "/bin/netcfg") .. " test")
+  print(c("accent", "claude:"))
+  os.execute(U.q(U.home() .. "/bin/claude") .. " doctor")
+elseif cmd == "uninstall" then
+  local ok, why = pkg.writable()
+  if not ok then U.die("shulker: " .. why) end
+  local chat = require("shulker.chat")
+  local ans = chat.ttyRead("Remove Shulker OS from " .. U.home() .. "? [y/N] ")
+  if not ans or not ans:lower():match("^y") then os.exit(1) end
+  os.execute("killall crond 2>/dev/null")
+  os.execute("rm -f /etc/profile.d/shulker.sh /etc/init.d/S95shulker")
+  os.execute("printf '\\nWelcome to Sedna\\n' > /etc/issue; rm -f /etc/motd")
+  for _, name in ipairs(pkg.installed()) do pkg.removePkg(name) end
+  os.execute("rm -rf " .. U.q(U.home()) .. " /etc/shulker")
+  if a[2] == "--purge" then os.execute("rm -rf " .. U.q(U.userdir())) end
+  print("Shulker OS removed." .. (a[2] == "--purge" and "" or " Your tasks, jobs and key are still in " .. U.userdir() .. "."))
+else
+  U.die("shulker: unknown command " .. cmd .. "\n" .. USAGE)
+end

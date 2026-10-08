@@ -1,0 +1,13 @@
+cowsay - a talking cow (or shulker, or creeper)
+
+SYNOPSIS
+  cowsay [-f cow|shulker|creeper] [TEXT]
+  cowsay -l
+
+DESCRIPTION
+  Prints TEXT (or standard input) in a speech bubble said by a figure.
+  `-l` lists the figures.
+
+EXAMPLES
+  cowsay -f shulker Hello from Sedna
+  fortune | cowsay -f creeper

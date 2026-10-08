@@ -1,0 +1,26 @@
+#!/usr/bin/lua
+-- fortune for Shulker OS: a random saying about Minecraft, computers and Linux
+local F = {
+  "There is no place like 127.0.0.1.",
+  "A shulker box is just a filesystem with a lid.",
+  "rm -rf is forever. Creepers are also forever.",
+  "The 8 MB disk teaches what the 8 TB disk forgot.",
+  "Never dig straight down. Never run code you have not read.",
+  "Redstone is just electronics with extra steps.",
+  "Real programmers count in hex. Real miners count in stacks of 64.",
+  "Have you tried turning the chunk off and on again?",
+  "In Sedna, every cycle counts. Count them wisely.",
+  "To err is human; to really foul things up requires a crontab.",
+  "The Ender Dragon respawns. Deleted files don't.",
+  "Unix is user friendly. It's just picky about its friends.",
+  "Keep calm and carry a water bucket.",
+  "There are 10 kinds of people: those who understand binary and those who don't.",
+  "Weeks of coding can save you hours of planning.",
+  "An Enderman stares at you. You stare at a segfault. Both are rude.",
+  "BusyBox: because one binary should be enough for anybody.",
+  "The best time to make a backup was yesterday. The second best is now.",
+  "Every tunnel you dig is a tree you can't climb.",
+  "Lua: small, fast, and it fits in a shulker box.",
+}
+math.randomseed(os.time() + math.floor(os.clock() * 1e6))
+print(F[math.random(#F)])

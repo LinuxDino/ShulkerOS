@@ -1,0 +1,13 @@
+lsbus - list OC2 bus devices and their methods
+
+SYNOPSIS
+  lsbus [DEVICE]
+
+DESCRIPTION
+  Lists every device on the computer's OpenComputers II device bus with its
+  type names, ID and methods (a friendlier `lsdev.lua`). With DEVICE (an ID or
+  a type name such as redstone) only that device is shown, with the method
+  descriptions.
+
+SEE ALSO
+  claude can call these methods for you: "turn on the redstone on the left".

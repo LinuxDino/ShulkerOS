@@ -1,0 +1,89 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- shulkerfetch: system information next to the Shulker OS logo (neofetch style)
+local U = require("shulker.util")
+local art = require("shulker.art")
+local c = U.c
+
+if arg[1] == "-h" or arg[1] == "--help" then print("usage: shulkerfetch [--plain]   system info with the logo (man shulkerfetch)") os.exit(0) end
+if arg[1] == "--plain" then U.setColor(false) end
+
+local function first(cmd) return U.trim((U.capture(cmd))) end
+local function kv(file, key)
+  for _, l in ipairs(U.lines(file)) do
+    local k, v = l:match("^(%S+):%s*(%d+)")
+    if k == key then return tonumber(v) end
+  end
+end
+
+local user = os.getenv("USER") or first("whoami")
+local host = first("hostname")
+local up = tonumber((U.read("/proc/uptime") or "0"):match("^(%d+)")) or 0
+local uptime = up >= 86400 and ("%dd %dh %dm"):format(up // 86400, up % 86400 // 3600, up % 3600 // 60)
+  or ("%dh %dm"):format(up // 3600, up % 3600 // 60)
+local memTotal, memAvail = kv("/proc/meminfo", "MemTotal") or 0, kv("/proc/meminfo", "MemAvailable") or 0
+local df = first("df -k / | tail -n 1")
+local dfF = {}
+for w in df:gmatch("%S+") do dfF[#dfF + 1] = w end
+local isa = ((U.read("/proc/cpuinfo") or ""):match("isa%s*:%s*(%S+)") or "riscv64"):match("^[^_]+")
+local harts = select(2, (U.read("/proc/cpuinfo") or ""):gsub("processor%s*:", ""))
+local ip = first("ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}'")
+local devs = "-"
+do
+  local ok, devices = pcall(require, "shulker.devices")
+  local list = ok and devices.list()
+  if list then devs = tostring(#list) .. " on the bus" end
+end
+local tasks = require("shulker.tasks")
+local open = 0
+for _, t in ipairs(tasks.load()) do if not t.blank and not t.done then open = open + 1 end end
+local jobs = #require("shulker.jobs").load()
+local pkgs = 0
+for _ in (U.read("/usr/local/shulker/installed") or ""):gmatch("[^\n]+") do pkgs = pkgs + 1 end
+local where = U.home():find("^/mnt/builtin") and "data pack" or "disk"
+
+local function row(k, v) return c("accent", k) .. c("dim", ": ") .. v end
+local lines = {
+  c("soft", user) .. c("dim", "@") .. c("soft", host),
+  c("dim", string.rep("-", #user + #host + 1)),
+  row("OS", "Shulker OS " .. U.VERSION .. " (" .. where .. ") on Sedna Linux"),
+  row("Kernel", first("uname -r") .. " " .. first("uname -m")),
+  row("Uptime", uptime),
+  row("CPU", ("%s, %d hart%s (emulated)"):format(isa, harts, harts == 1 and "" or "s")),
+  row("Memory", ("%s / %s"):format(U.human((memTotal - memAvail) * 1024), U.human(memTotal * 1024))),
+  row("Disk /", dfF[3] and ("%s / %s (%s free)"):format(U.human(tonumber(dfF[3]) * 1024), U.human(tonumber(dfF[2]) * 1024), U.human(tonumber(dfF[4]) * 1024)) or "?"),
+  row("Shell", (os.getenv("SHELL") or "/bin/sh") .. " (BusyBox)"),
+  row("Network", ip ~= "" and ip or "not configured (netcfg)"),
+  row("Devices", devs),
+  row("Tasks", ("%d open, %d job%s"):format(open, jobs, jobs == 1 and "" or "s")),
+  row("Packages", tostring(pkgs)),
+}
+local swatch = ""
+for _, code in ipairs({ "30", "31", "32", "33", "34", "35", "36", "37" }) do swatch = swatch .. c(code, "##") end
+local swatch2 = ""
+for _, code in ipairs({ "90", "91", "92", "93", "94", "95", "96", "97" }) do swatch2 = swatch2 .. c(code, "##") end
+if U.colored() then
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = swatch
+  lines[#lines + 1] = swatch2
+end
+
+local logo = art.logo(c, not U.colored() or os.getenv("SHULKER_ASCII") == "1")
+print()
+for i = 1, #lines do
+  io.write("  " .. (logo[i] or string.rep(" ", art.WIDTH)) .. "   " .. lines[i] .. "\n")
+end
+print()

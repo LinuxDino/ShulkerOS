@@ -1,0 +1,12 @@
+shulkerfetch - system information with the Shulker OS logo
+
+SYNOPSIS
+  shulkerfetch [--plain]
+
+DESCRIPTION
+  Shows user and host, Shulker OS version (and whether it runs from the disk
+  or the data pack), kernel, uptime, CPU, memory, disk, shell, IP address,
+  OC2 bus devices, open tasks, scheduled jobs and installed apps, next to the
+  shulker box logo, like neofetch (which is an alias for it).
+  --plain (or NO_COLOR) prints without colours and with an ASCII logo.
+  SHULKER_ASCII=1 uses the ASCII logo on terminals without DEC line drawing.

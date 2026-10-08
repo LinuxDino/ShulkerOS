@@ -1,0 +1,55 @@
+task - to-do list and scheduled jobs
+
+SYNOPSIS
+  task                               interactive list (on a terminal)
+  task add [-p high|medium|low] TEXT
+  task list [open|done|all|WORD]
+  task done N... | undo N | pri N LEVEL | edit N TEXT | rm N... | archive
+  task job [add WHEN KIND "COMMAND" [--name N] [--allow T,...] | rm ID | log ID [LINES] | run ID]
+
+TASKS
+  Tasks live in ~/.shulker/tasks.txt in the todo.txt format, so you can read
+  and edit the file with cat or nano:
+    (A) 2026-10-08 Build the reactor +base @overworld
+    x 2026-10-09 2026-10-08 Craft 64 cables pri:B
+  (A) (B) (C) are high, medium and low priority. Starting a task with !! or !
+  also sets high or medium. +project and @context words are highlighted and
+  searchable (`task list +base`). A task's number is its line in the file.
+  `task archive` moves finished tasks to ~/.shulker/tasks.done.txt.
+  `task Buy cables` (no subcommand) adds a task too.
+
+INTERACTIVE LIST
+  Up/Down (or j/k) move, Space toggles done, p cycles the priority, a adds,
+  e edits, d deletes, A archives finished tasks, q quits.
+
+SCHEDULED JOBS
+  A job runs a shell command or a Claude prompt later or repeatedly, through
+  BusyBox crond. WHEN is one of:
+    in 10m | in 2h          once, that long from now
+    at 14:30                once, at the next 14:30
+    every 5m | every 2h | every 3d
+    hourly | daily | daily 09:00 | weekly
+    "*/15 * * * *"          any 5-field cron spec
+  Times use this computer's clock (usually UTC, see `date`).
+  KIND is shell or claude:
+    task job add "every 1h" shell "df -h / >> /root/disk.log"
+    task job add "daily 08:00" claude "check free disk space and add a task if it's below 200 KB" --allow run_command
+  Claude jobs run `claude -p` without anyone at the terminal, so risky tools
+  are refused unless listed with --allow. Output (and Claude's report) goes
+  to ~/.shulker/jobs/<id>.log, kept to the last 16 KB: `task job log j1`.
+  One-time jobs remove themselves after running. Claude can create, list
+  and remove jobs too (it asks first).
+
+FILES
+  ~/.shulker/tasks.txt, ~/.shulker/tasks.done.txt
+  ~/.shulker/jobs/jobs.json, ~/.shulker/jobs/<id>.log
+  /etc/shulker/crontabs/root     generated; lines outside the managed block
+                                 are yours (`crontab -e` edits this file)
+
+NOTES
+  Sedna's /var/spool is a RAM disk, so Shulker OS runs crond with
+  `-c /etc/shulker/crontabs` to keep jobs across reboots. crond is started
+  at boot; `task job` starts it if it isn't running.
+
+SEE ALSO
+  claude(1)

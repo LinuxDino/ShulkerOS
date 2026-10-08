@@ -1,0 +1,9 @@
+matrix - purple digital rain
+
+SYNOPSIS
+  matrix
+
+DESCRIPTION
+  Fills the terminal with falling characters in the shulker colours, like
+  cmatrix. Press any key (or Ctrl-C) to quit. On the emulated CPU it runs at
+  a relaxed pace.

@@ -2,7 +2,8 @@
 -- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
 local H = os.getenv("SHULKER_HOME")
 if not H or H == "" then
-  local d = (arg and arg[0] or ""):match("^(.*)/bin/[^/]+$")
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
   for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
     local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
     if f then f:close() H = c break end
