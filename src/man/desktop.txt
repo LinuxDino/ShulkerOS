@@ -1,0 +1,24 @@
+desktop - a full-screen launcher
+
+SYNOPSIS
+  desktop
+
+DESCRIPTION
+  A full-screen view of everything on this computer, used with the mouse
+  (click) or the keys shown in brackets. Apps on the left:
+
+  Home      [h]  this computer, alerts, the swarm at a glance
+  Tasks     [t]  your to-do list (the task command)
+  Swarm     [w]  the computers in the swarm and their jobs
+  Drones    [d]  drones: battery, position, send home
+  Files     [f]  browse, open and edit files
+  Network   [n]  network status, test, automatic setup
+  Settings  [s]  name, password, setup wizard, Claude on or off, updates
+  Claude    [c]  the assistant (only when it is turned on)
+  Shell     [x]  a normal shell; type `exit` to come back
+
+  Home, Swarm and Drones refresh every 5 seconds. Programs started from the
+  desktop take over the screen until they end.
+
+SEE ALSO
+  intro, task, swarm, drone, monitor, dashboard

@@ -86,6 +86,8 @@ end
 
 -- a small status report: what the leader and the dashboards show
 function M.stats()
+  local okM, monitor = pcall(require, "shulker.monitor")
+  local mon = okM and monitor.state(30)
   local meminfo = U.read("/proc/meminfo") or ""
   local total = tonumber(meminfo:match("MemTotal:%s*(%d+)")) or 0
   local avail = tonumber(meminfo:match("MemAvailable:%s*(%d+)")) or 0
@@ -102,6 +104,8 @@ function M.stats()
     uptime = math.floor(readNum("/proc/uptime", "^(%S+)") or 0),
     rx = tonumber(rx), tx = tonumber(tx),
     drone = M.droneInfo(),
+    energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
+    alerts = mon and #(mon.alerts or {}) or nil,
     version = U.trim(U.read(U.home() .. "/VERSION") or U.VERSION),
   }
 end

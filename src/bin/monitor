@@ -1,0 +1,119 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- monitor: energy, redstone and machine sensors, alert rules, the monitor daemon
+local U = require("shulker.util")
+local M = require("shulker.monitor")
+local c = U.c
+
+local USAGE = [==[
+usage: monitor                         sensors now, and active alerts
+       monitor watch                   the same, refreshed every 2 seconds
+       monitor rules                   the alert rules
+       monitor add NAME SENSOR OP VALUE [ACTION]
+                                       e.g. monitor add low-power energy '<' 20 redstone:up
+       monitor rm NAME                 remove a rule
+       monitor log                     alert history
+       monitor start | stop            the monitor daemon (starts at boot once a rule exists)
+sensors: energy energy.N redstone.SIDE comparator furnace mem disk load drone.charge
+         swarm.offline swarm.alerts (main computer)
+actions: log | redstone:SIDE (signal 15 while the alert lasts) | run:COMMAND
+see `man monitor`]==]
+
+local a = arg
+local cmd = a[1] or "show"
+local PID = "/tmp/shulker-monitor.pid"
+
+local function running()
+  local pid = U.trim(U.read(PID) or "")
+  return pid ~= "" and U.exists("/proc/" .. pid) and pid or nil
+end
+
+local function show()
+  local st = M.state(15)
+  local sensors = st and st.sensors or M.read()
+  local names = {}
+  for k in pairs(sensors) do names[#names + 1] = k end
+  table.sort(names)
+  print(c("bright", "Sensors") .. (st and "" or c("dim", "  (read now: the monitor daemon is not running)")))
+  for _, k in ipairs(names) do
+    local s = sensors[k]
+    local v = tostring(s.value) .. (s.unit or "")
+    local extra = s.label and c("dim", "  " .. s.label) or ""
+    print(("  %-16s %8s%s"):format(k, v, extra))
+  end
+  if #names == 0 then print(c("dim", "  none")) end
+  local alerts = st and st.alerts or {}
+  print(c("bright", "Alerts"))
+  if #alerts == 0 then print("  " .. c("ok", "none")) end
+  for _, al in ipairs(alerts) do
+    print(("  %s %-14s %s = %s  since %s"):format(c("err", "!"), al.name, al.sensor, tostring(al.value), os.date("%H:%M:%S", al.since)))
+  end
+end
+
+if cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(0)
+elseif cmd == "show" then show()
+elseif cmd == "watch" then
+  while true do
+    io.write("\27[H\27[2J")
+    show()
+    io.flush()
+    os.execute("sleep 2")
+  end
+elseif cmd == "rules" then
+  local conf = M.load()
+  if #conf.rules == 0 then print("no rules. Example: monitor add low-power energy '<' 20 redstone:up") end
+  for _, r in ipairs(conf.rules) do print(("  %-14s %s %s %s  -> %s"):format(r.name, r.sensor, r.op, r.value, r.action)) end
+elseif cmd == "add" then
+  local r = { name = a[2], sensor = a[3], op = a[4], value = a[5] or "", action = table.concat(a, " ", 6) }
+  if r.action == "" then r.action = "log" end
+  if not r.sensor then U.die(USAGE) end
+  local ok, err = M.validRule(r)
+  if not ok then U.die("monitor: " .. err) end
+  local conf = M.load()
+  for i = #conf.rules, 1, -1 do if conf.rules[i].name == r.name then table.remove(conf.rules, i) end end
+  conf.rules[#conf.rules + 1] = r
+  M.save(conf)
+  print(("rule %s: %s %s %s -> %s"):format(r.name, r.sensor, r.op, r.value, r.action))
+  if not running() then os.execute(U.q(U.home() .. "/bin/monitor") .. " start") end
+elseif cmd == "rm" then
+  local conf, found = M.load(), false
+  for i = #conf.rules, 1, -1 do if conf.rules[i].name == a[2] then table.remove(conf.rules, i) found = true end end
+  if not found then U.die("monitor: no rule " .. tostring(a[2])) end
+  M.save(conf)
+  print("removed " .. a[2])
+elseif cmd == "log" then
+  io.write(U.read(M.LOG) or "no alerts yet\n")
+elseif cmd == "start" then
+  if running() then print("the monitor is running") os.exit(0) end
+  os.execute(("SHULKER_HOME=%s nohup %s daemon >> /tmp/shulker-monitor.out 2>&1 < /dev/null & echo $! > %s")
+    :format(U.q(U.home()), U.q(U.home() .. "/bin/monitor"), PID))
+  print("monitor started")
+elseif cmd == "stop" then
+  local pid = running()
+  if pid then os.execute("kill " .. pid) end
+  os.remove(PID)
+  print("monitor stopped")
+elseif cmd == "daemon" then
+  local active = {}
+  while true do
+    local conf = M.load()
+    local ok, err = pcall(M.tick, conf, active)
+    if not ok then io.stderr:write(os.date("%H:%M:%S ") .. tostring(err) .. "\n") end
+    os.execute("sleep " .. math.max(1, math.floor(conf.interval or 5)))
+  end
+else
+  U.die("monitor: unknown command " .. cmd .. "\n" .. USAGE)
+end

@@ -1,0 +1,25 @@
+dashboard - a status wall on a projector
+
+SYNOPSIS
+  dashboard [--once] [--every SECONDS] [--fb /dev/fbN]
+  dashboard start | stop
+
+DESCRIPTION
+  Draws a status wall on an OC2 projector (640x480): energy with a bar per
+  storage, active alerts, this computer's memory and disk, the swarm (each
+  computer with a green, yellow or red dot; drones show their battery), and
+  the open tasks. Parts are redrawn only when they change.
+
+  Place a projector, connect it to the computer with a bus cable, and run
+  `dashboard start`. It keeps running and starts again at every boot until
+  `dashboard stop`.
+
+  On the main computer of a swarm, the dashboard shows the whole swarm:
+  put it on a wall in your control room.
+
+FILES
+  /etc/shulker/dashboard.enabled   start at boot
+  /tmp/shulker-dashboard.log       errors
+
+SEE ALSO
+  monitor, swarm, desktop

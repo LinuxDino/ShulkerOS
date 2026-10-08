@@ -36,6 +36,13 @@ start() {
 		echo "Starting Shulker Swarm: $(sed -n 's/^role=//p' "$ETC/swarm.conf")"
 		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/swarm" services
 	fi
+	# alert rules (monitor add) and the projector dashboard (dashboard start)
+	if grep -q '^rule ' "$ETC/monitor.conf" 2>/dev/null; then
+		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/monitor" start >/dev/null
+	fi
+	if [ -f "$ETC/dashboard.enabled" ]; then
+		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/dashboard" start >/dev/null
+	fi
 	# ssh (sshctl on)
 	if [ -f "$ETC/ssh.enabled" ] && [ -x /etc/init.d/dropbear ] && ! pidof dropbear >/dev/null 2>&1; then
 		/etc/init.d/dropbear start

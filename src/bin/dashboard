@@ -1,0 +1,212 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- dashboard: a status wall on an OC2 projector (energy, alerts, swarm, drones, tasks, the machine)
+local U = require("shulker.util")
+local FB = require("shulker.fb")
+local monitor = require("shulker.monitor")
+local json = require("shulker.json")
+local C = FB.C
+
+local USAGE = [==[
+usage: dashboard [--once] [--every SECONDS] [--fb /dev/fbN]
+       dashboard start | stop          run it in the background (and at boot)
+Shows energy, alerts, the swarm and its drones, tasks and this machine on a projector.
+see `man dashboard`]==]
+
+local a = arg
+local once, every, dev = false, 5, nil
+local PID = "/tmp/shulker-dashboard.pid"
+local FLAG = U.etcdir() .. "/dashboard.enabled"
+local i = 1
+while a[i] do
+  local x = a[i]
+  if x == "--once" then once = true
+  elseif x == "--every" then every = tonumber(a[i + 1]) or 5 i = i + 1
+  elseif x == "--fb" then dev = a[i + 1] i = i + 1
+  elseif x == "start" then
+    U.mkdir(U.etcdir()) U.write(FLAG, "1\n")
+    os.execute(("SHULKER_HOME=%s nohup %s >> /tmp/shulker-dashboard.log 2>&1 < /dev/null & echo $! > %s")
+      :format(U.q(U.home()), U.q(U.home() .. "/bin/dashboard"), PID))
+    print("dashboard started (and at every boot; `dashboard stop` to end)") os.exit(0)
+  elseif x == "stop" then
+    local pid = U.trim(U.read(PID) or "")
+    if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
+    os.remove(PID) os.remove(FLAG)
+    print("dashboard stopped") os.exit(0)
+  else print(USAGE) os.exit((x == "-h" or x == "--help") and 0 or 1) end
+  i = i + 1
+end
+
+local fb, err = FB.open(dev)
+if not fb then U.die("dashboard: " .. err) end
+local W, H = fb.w, fb.h
+
+---------------------------------------------------------------- data
+local function swarmData()
+  local okS, swarm = pcall(require, "shulker.swarm")
+  if not okS or not U.exists(swarm.confPath()) then return nil end
+  local conf = swarm.loadConf()
+  if conf.role ~= "main" then return { role = conf.role or "worker", leader = swarm.leaderOf(conf) } end
+  local st = swarm.call(setmetatable({ leader = "127.0.0.1" }, { __index = conf }), { op = "status" }, 2)
+  if not st then return { role = "main", down = true } end
+  return { role = "main", nodes = st.nodes or {}, queued = st.queued, running = st.running }
+end
+
+local function gather()
+  local st = monitor.state(20)
+  local sensors = st and st.sensors or monitor.read()
+  local tasks = {}
+  local okT, T = pcall(require, "shulker.tasks")
+  if okT then for _, t in ipairs(T.select("open")) do if #tasks < 7 then tasks[#tasks + 1] = { pri = t.pri, text = t.text } end end end
+  return {
+    host = U.trim(U.read("/etc/hostname") or "shulker"),
+    sensors = sensors, alerts = st and st.alerts or {}, monitorOn = st ~= nil,
+    swarm = swarmData(), tasks = tasks,
+    energy = st and st.energy or {},
+  }
+end
+
+---------------------------------------------------------------- drawing
+local function pctColor(p, lowBad)
+  if lowBad then return p < 20 and C.err or p < 50 and C.warn or C.ok end
+  return p > 90 and C.err or p > 70 and C.warn or C.ok
+end
+
+local function header(d)
+  fb:fill(0, 0, W, 40, C.panel)
+  fb:fill(0, 40, W, 2, C.accent)
+  local x = fb:text(12, 4, "SHULKER", C.accent, C.panel, 2)
+  fb:text(x + 16, 12, d.host, C.text, C.panel)
+end
+
+local function clock()
+  fb:text(W - 8 * 9 - 12, 12, os.date(" %H:%M:%S"), C.dim, C.panel)
+end
+
+local function energyPanel(d, x0, y0, w, h)
+  local x, y, iw = fb:panel(x0, y0, w, h, "ENERGY")
+  local e = d.sensors.energy
+  if not e then
+    fb:text(x, y, "no energy storage on the bus", C.dim, C.panel)
+    fb:text(x, y + 18, "(cables to a battery/capacitor)", C.dim, C.panel)
+    return
+  end
+  fb:text(x, y, ("%3d%%"):format(e.value), pctColor(e.value, true), C.panel, 2)
+  fb:text(x + 80, y + 8, e.label or "", C.dim, C.panel)
+  fb:bar(x, y + 36, iw, 14, e.value / 100, pctColor(e.value, true))
+  local yy = y + 58
+  for n = 1, 4 do
+    local s = d.sensors["energy." .. n]
+    if not s or yy > y0 + h - 18 then break end
+    fb:text(x, yy, ("#%d %3d%%"):format(n, s.value), C.text, C.panel)
+    fb:bar(x + 72, yy + 2, iw - 72, 10, s.value / 100, pctColor(s.value, true))
+    yy = yy + 18
+  end
+end
+
+local function alertsPanel(d, x0, y0, w, h)
+  local x, y = fb:panel(x0, y0, w, h, "ALERTS")
+  if not d.monitorOn then fb:text(x, y, "monitor off: `monitor add ...`", C.dim, C.panel) return end
+  if #d.alerts == 0 then fb:text(x, y, "all clear", C.ok, C.panel) return end
+  for n, al in ipairs(d.alerts) do
+    if y + (n - 1) * 18 > y0 + h - 18 then break end
+    fb:fill(x, y + (n - 1) * 18 + 3, 10, 10, C.err)
+    fb:text(x + 16, y + (n - 1) * 18, ("%s  %s=%s"):format(al.name, al.sensor, tostring(al.value)), C.text, C.panel)
+  end
+end
+
+local function machinePanel(d, x0, y0, w, h)
+  local x, y, iw = fb:panel(x0, y0, w, h, "THIS COMPUTER")
+  local rows = { { "mem", d.sensors.mem }, { "disk", d.sensors.disk } }
+  for n, r in ipairs(rows) do
+    local s = r[2]
+    local yy = y + (n - 1) * 20
+    fb:text(x, yy, ("%-4s %3s%%"):format(r[1], s and tostring(s.value) or "?"), C.text, C.panel)
+    fb:bar(x + 80, yy + 2, iw - 80, 12, (s and s.value or 0) / 100, pctColor(s and s.value or 0))
+  end
+  local l = d.sensors.load
+  fb:text(x, y + 44, ("load %.2f"):format(l and l.value or 0), C.text, C.panel)
+end
+
+local function swarmPanel(d, x0, y0, w, h)
+  local x, y, iw = fb:panel(x0, y0, w, h, "SWARM")
+  local s = d.swarm
+  if not s then fb:text(x, y, "not in a swarm (`swarm init`)", C.dim, C.panel) return end
+  if s.role ~= "main" then fb:text(x, y, ("%s of %s"):format(s.role, s.leader or "?"), C.text, C.panel) return end
+  if s.down then fb:text(x, y, "swarm leader is not running", C.err, C.panel) return end
+  local on, total = 0, #s.nodes
+  for _, n in ipairs(s.nodes) do if n.online then on = on + 1 end end
+  fb:text(x, y, ("%d/%d online  jobs %d queued %d running"):format(on, total, s.queued or 0, s.running or 0), C.text, C.panel)
+  local yy = y + 22
+  local colW = math.floor(iw / 2)
+  local col = 0
+  for _, n in ipairs(s.nodes) do
+    if yy > y0 + h - 18 then break end
+    local st = n.stats or {}
+    local dot = not n.online and C.err or n.busy and C.warn or C.ok
+    local xx = x + col * colW
+    fb:fill(xx, yy + 3, 10, 10, dot)
+    local info
+    if st.drone and st.drone.charge then info = ("bat %d%%"):format(st.drone.charge)
+    elseif st.energy then info = ("E %d%%"):format(st.energy)
+    else info = ("%.1f"):format(tonumber(st.load) or 0) end
+    if (tonumber(st.alerts) or 0) > 0 then info = info .. " !" .. st.alerts end
+    local name = (n.name or "?") .. (st.drone and "*" or "")
+    fb:text(xx + 14, yy, ("%-8s %s"):format(name:sub(1, 8), info):sub(1, math.floor(colW / 8) - 2),
+      n.online and C.text or C.dim, C.panel)
+    col = col + 1
+    if col == 2 then col = 0 yy = yy + 18 end
+  end
+end
+
+local function tasksPanel(d, x0, y0, w, h)
+  local x, y, iw = fb:panel(x0, y0, w, h, "TASKS")
+  if #d.tasks == 0 then fb:text(x, y, "nothing to do", C.dim, C.panel) return end
+  for n, t in ipairs(d.tasks) do
+    if y + (n - 1) * 18 > y0 + h - 18 then break end
+    local pc = t.pri == "A" and C.err or t.pri == "B" and C.warn or t.pri and C.cyan or C.dim
+    fb:text(x, y + (n - 1) * 18, t.pri and ("(" .. t.pri .. ")") or " - ", pc, C.panel)
+    fb:text(x + 32, y + (n - 1) * 18, t.text:sub(1, math.floor((iw - 32) / 8)), C.text, C.panel)
+  end
+end
+
+---------------------------------------------------------------- loop
+local last = {}
+local function draw(d, force)
+  local function part(key, value, fn, ...)
+    local sig = json.encode(value)
+    if force or last[key] ~= sig then last[key] = sig fn(d, ...) end
+  end
+  local half = math.floor(W / 2)
+  part("header", d.host, header)
+  part("energy", { d.sensors.energy, d.sensors["energy.1"], d.sensors["energy.2"], d.sensors["energy.3"], d.sensors["energy.4"] },
+    energyPanel, 6, 48, half - 9, 152)
+  part("alerts", { d.alerts, d.monitorOn }, alertsPanel, 6, 206, half - 9, 136)
+  part("machine", { d.sensors.mem, d.sensors.disk, d.sensors.load }, machinePanel, 6, 348, half - 9, H - 354)
+  part("swarm", d.swarm or false, swarmPanel, half + 3, 48, W - half - 9, 270)
+  part("tasks", d.tasks, tasksPanel, half + 3, 324, W - half - 9, H - 330)
+  clock()
+  fb:flush()
+end
+
+fb:clear(C.bg)
+draw(gather(), true)
+if once then fb:close() os.exit(0) end
+while true do
+  os.execute("sleep " .. every)
+  local ok, e = pcall(function() draw(gather(), false) end)
+  if not ok then io.stderr:write(os.date("%H:%M:%S ") .. tostring(e) .. "\n") end
+end

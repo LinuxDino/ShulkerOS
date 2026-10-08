@@ -1,0 +1,51 @@
+monitor - sensors, alert rules and alarms
+
+SYNOPSIS
+  monitor [watch]
+  monitor rules | add NAME SENSOR OP VALUE [ACTION] | rm NAME
+  monitor log
+  monitor start | stop
+
+DESCRIPTION
+  Reads what is connected to the computer's bus and the machine itself,
+  every few seconds, and raises alerts when a rule matches.
+
+SENSORS
+  energy          percent of all energy storage on the bus together
+                  (batteries, capacitors: anything with energy that a
+                  bus cable touches)
+  energy.1 ..     each storage on its own
+  redstone.SIDE   input level 0-15 of the redstone interface; SIDE is
+                  up down north south east west
+  comparator      a comparator's output 0-15 (e.g. how full a chest is)
+  furnace         1 while a furnace burns
+  mem disk        percent used; load: the load average
+  drone.charge    a drone's battery, percent
+  swarm.offline   computers in the swarm that stopped answering (main)
+  swarm.alerts    alerts on all swarm computers together (main)
+
+RULES
+  OP is < <= > >= = !=, VALUE a number. ACTION:
+    log             write it to the alert log (always done)
+    redstone:SIDE   emit signal 15 on SIDE while the alert lasts: wire a
+                    bell, lamp or note blocks to it for an alarm
+    run:COMMAND     run a shell command once when the alert starts
+
+  monitor add low-power energy '<' 20 redstone:up
+  monitor add intruder redstone.north '>' 0 run:swarm run --on drone1 drone home
+  monitor add lost-node swarm.offline '>' 0
+
+  Quote < and > for the shell. Adding the first rule starts the daemon;
+  it then starts at every boot.
+
+SWARM AND DASHBOARD
+  Each computer's energy and alert count go to the main computer with the
+  swarm heartbeat (swarm top). `dashboard` shows them on a projector.
+
+FILES
+  /etc/shulker/monitor.conf       interval= and the rules
+  /tmp/shulker-monitor.json       the current state
+  /var/log/shulker-monitor.log    alert history
+
+SEE ALSO
+  dashboard, swarm, drone

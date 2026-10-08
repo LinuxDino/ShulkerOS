@@ -22,6 +22,9 @@ COMMANDS
   sshctl         turn the SSH server on or off
   swarm          many computers working as one (`man swarm`)
   drone          robots as drones in the swarm (`man drone`)
+  monitor        energy, redstone and machine sensors with alarms (`man monitor`)
+  dashboard      a status wall on a projector (`man dashboard`)
+  desktop        a full-screen launcher for everything here
   shulker setup  the setup wizard again
   man            these pages: `man -l` lists them, `man -k WORD` searches
 
