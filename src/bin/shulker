@@ -30,6 +30,7 @@ usage: shulker version                 version, where it's installed, repository
        shulker linux kernel            upgrade to the Shulker Linux kernel (/boot/Image)
        shulker linux install [DEV]     write Shulker Linux to an empty drive (then swap drives)
        shulker disks [setup --raid0|--linear|--raid1|--separate]   extra drives as /data
+       shulker slim [--yes]            remove MicroPython and tcc (about 650 KB) to make room
        shulker setup                   run the setup wizard again
        shulker enable|disable claude   turn the Claude assistant on or off
        shulker uninstall [--purge]     remove Shulker OS from this disk (--purge: also ~/.shulker)
@@ -56,6 +57,27 @@ elseif cmd == "enable" or cmd == "disable" then
   U.mkdir(U.etcdir())
   U.write(path, table.concat(lines, "\n") .. "\n")
   print("Claude assistant " .. (cmd == "enable" and "on" or "off") .. ".")
+  os.exit(0)
+elseif cmd == "slim" then
+  -- stock Sedna ships MicroPython and the tcc C compiler; a swarm worker needs neither
+  local items = { "/usr/bin/micropython", "/usr/bin/tcc", "/usr/lib/tcc", "/usr/lib/libtcc.a", "/usr/include/libtcc.h" }
+  local found, kb = {}, 0
+  for _, p in ipairs(items) do
+    if U.exists(p) then
+      found[#found + 1] = p
+      kb = kb + (tonumber(U.capture("du -sk " .. U.q(p)):match("^(%d+)")) or 0)
+    end
+  end
+  if #found == 0 then print("nothing to remove: already slim") os.exit(0) end
+  print(("Removes MicroPython and the tcc C compiler (%d KB): %s"):format(kb, table.concat(found, " ")))
+  local yes = a[2] == "--yes" or a[2] == "-y"
+  if not yes then
+    local ans = require("shulker.chat").ttyRead("Remove them? [y/N] ")
+    if not ans or not ans:lower():match("^y") then os.exit(1) end
+  end
+  for _, p in ipairs(found) do os.execute("rm -rf " .. U.q(p)) end
+  os.execute("sync")
+  print(c("ok", "done") .. (": %d KB free on /"):format(pkg.freeKB("/") or 0))
   os.exit(0)
 elseif cmd == "linux" or cmd == "disks" then
   local L = require("shulker.linux")

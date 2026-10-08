@@ -26,6 +26,29 @@ usage: dashboard [--once] [--every SECONDS] [--fb /dev/fbN]
 Shows energy, alerts, the swarm and its drones, tasks and this machine on a projector.
 see `man dashboard`]==]
 
+-- Linux draws its text console on the first framebuffer; detach it so it can't paint over the dashboard
+local function fbcon(on)
+  local ls = U.capture("ls -d /sys/class/vtconsole/vtcon* 2>/dev/null")
+  for d in ls:gmatch("%S+") do
+    if (U.read(d .. "/name") or ""):match("frame buffer") then
+      os.execute(("echo %d > %s/bind 2>/dev/null"):format(on and 1 or 0, d))
+    end
+  end
+end
+
+local function noProjector()
+  io.stderr:write([==[
+dashboard: no projector found (no /dev/fb0).
+  1. Shut the computer down first: OC2 only finds a projector when the computer starts.
+  2. Connect the projector to the computer with bus cables (or put it right next to the computer).
+  3. Power the projector directly (an energy cable or power source touching it): the bus
+     cable does not carry enough. A red lens means it has no power.
+  4. Nothing solid right in front of the lens.
+  5. Start the computer and check:  ls /dev/fb*
+]==])
+  os.exit(1)
+end
+
 local a = arg
 local once, every, dev = false, 5, nil
 local PID = "/tmp/shulker-dashboard.pid"
@@ -37,21 +60,31 @@ while a[i] do
   elseif x == "--every" then every = tonumber(a[i + 1]) or 5 i = i + 1
   elseif x == "--fb" then dev = a[i + 1] i = i + 1
   elseif x == "start" then
+    if not FB.find() then noProjector() end
     U.mkdir(U.etcdir()) U.write(FLAG, "1\n")
     os.execute(("SHULKER_HOME=%s nohup %s >> /tmp/shulker-dashboard.log 2>&1 < /dev/null & echo $! > %s")
       :format(U.q(U.home()), U.q(U.home() .. "/bin/dashboard"), PID))
-    print("dashboard started (and at every boot; `dashboard stop` to end)") os.exit(0)
+    os.execute("sleep 2")
+    local pid = U.trim(U.read(PID) or "")
+    if pid == "" or not U.exists("/proc/" .. pid) then
+      io.stderr:write("dashboard: it stopped right away:\n" .. U.capture("tail -5 /tmp/shulker-dashboard.log") .. "\n")
+      os.exit(1)
+    end
+    print("dashboard running on the projector (also at every boot; `dashboard stop` to end)") os.exit(0)
   elseif x == "stop" then
     local pid = U.trim(U.read(PID) or "")
     if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
     os.remove(PID) os.remove(FLAG)
+    fbcon(true)
     print("dashboard stopped") os.exit(0)
   else print(USAGE) os.exit((x == "-h" or x == "--help") and 0 or 1) end
   i = i + 1
 end
 
+if not dev and not FB.find() then noProjector() end
 local fb, err = FB.open(dev)
 if not fb then U.die("dashboard: " .. err) end
+if not dev or dev:match("^/dev/fb") then fbcon(false) end
 local W, H = fb.w, fb.h
 
 ---------------------------------------------------------------- data

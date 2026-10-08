@@ -10,9 +10,17 @@ DESCRIPTION
   computer with a green, yellow or red dot; drones show their battery), and
   the open tasks. Parts are redrawn only when they change.
 
-  Place a projector, connect it to the computer with a bus cable, and run
-  `dashboard start`. It keeps running and starts again at every boot until
-  `dashboard stop`.
+  Setting up the projector:
+    1. Shut the computer down (OC2 only finds a projector at start-up).
+    2. Connect the projector to the computer with bus cables, or place it
+       right next to the computer.
+    3. Power it directly: an energy cable or power source touching it. The
+       bus cable is not enough; a red lens means no power.
+    4. Keep the block in front of the lens free (it projects onto the wall
+       behind that, up to 12 blocks away).
+    5. Start the computer, check `ls /dev/fb0`, then run `dashboard start`.
+  It keeps running and starts again at every boot until `dashboard stop`.
+  While it runs, the Linux text console is detached from the projector.
 
   On the main computer of a swarm, the dashboard shows the whole swarm:
   put it on a wall in your control room.

@@ -240,7 +240,8 @@ function M.installPkg(name, progress)
   for _, f in ipairs(files) do need = need + f.size end
   local free = M.freeKB(M.PKGROOT)
   if free and need / 1024 + 64 > free then
-    return nil, ("not enough disk space: %s needs %d KB, %d KB free"):format(name, math.ceil(need / 1024), free)
+    return nil, ("not enough disk space: %s needs %d KB, %d KB free%s"):format(name, math.ceil(need / 1024 + 64), free,
+      U.exists("/usr/bin/micropython") and " (`shulker slim` frees about 650 KB)" or "")
   end
   local stage, err = M.stage(M.base() .. "/packages/" .. name, files, progress)
   if not stage then return nil, err end
