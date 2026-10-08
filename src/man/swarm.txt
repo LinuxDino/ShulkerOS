@@ -66,3 +66,12 @@ FILES
   /etc/shulker/swarm.conf         role, main address, token, node name
   /etc/shulker/swarm-nodes.json   the main computer's list of nodes
   /tmp/swarmd-*.log               service logs (`swarm log`)
+
+UPDATES AND APPS IN THE SWARM
+  Every member gets Shulker OS updates, apps (shulker install) and Shulker
+  Linux images (shulker linux, mkdisk) from the main computer, not from
+  GitHub: many computers going out at once overwhelm the Internet Gateway.
+  The main fetches each app or image from GitHub once, keeps a copy (in
+  /data/.shulker-cache, or /tmp) and hands it to everyone; the first ask
+  waits a moment while it fetches. Drones go through their drone base.
+  Update the main first:  shulker update,  then  swarm run --on all shulker update

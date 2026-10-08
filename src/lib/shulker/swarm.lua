@@ -625,6 +625,59 @@ function M.joinScript(leaderIp)
 end
 
 -- answer one HTTP request on an accepted connection
+-- the main's copy of repository files (apps, kernel and system images) for the swarm
+function M.cacheDir()
+  local d = U.isdir("/data") and "/data/.shulker-cache" or "/tmp/shulker-cache"
+  U.mkdir(d)
+  return d
+end
+M.CACHE_TTL = 600
+
+-- rel = "packages/..." or "linux/dist/...": the cached file | nil, "fetching" | "missing"
+function M.cached(rel)
+  local dir = M.cacheDir()
+  local file = dir .. "/" .. rel:gsub("/", "__")
+  local stamp = file .. ".time"
+  local age = os.time() - (tonumber(U.read(stamp) or "") or 0)
+  if U.exists(file) and age < M.CACHE_TTL then return file end
+  if U.exists(file .. ".missing") and age < 60 then return nil, "missing" end
+  -- a stale copy is still served while a fresh one is fetched in the background
+  local busy = file .. ".fetching"
+  local since = tonumber(U.read(busy) or "") or 0
+  if os.time() - since > 300 then
+    U.write(busy, tostring(os.time()))
+    local pkg = require("shulker.pkg")
+    local pc = pkg.conf()
+    local url = (pc.swarm and pkg.DEFAULT_REPO or pc.repo) .. "/" .. (pc.swarm and "main" or pc.branch) .. "/" .. rel
+    local get = pkg.verifiedTLS() and "curl -fsSL --max-time 600 -o %s.part %s" or "wget -q -T 60 -O %s.part %s"
+    os.execute(("(rm -f %s.missing; if " .. get .. " 2>/dev/null; then mv %s.part %s; date +%%s > %s; " ..
+      "else rm -f %s.part; date +%%s > %s; touch %s.missing; fi; rm -f %s) >/dev/null 2>&1 &")
+      :format(U.q(file), U.q(file), U.q(url), U.q(file), U.q(file), U.q(stamp), U.q(file), U.q(stamp), U.q(file), U.q(busy)))
+  end
+  if U.exists(file) then return file end
+  return nil, "fetching"
+end
+
+function M.sendFile(c, file)
+  local f = io.open(file, "rb")
+  if not f then return end
+  local size = f:seek("end")
+  f:seek("set", 0)
+  c:settimeout(30)
+  c:send(("HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"):format(size))
+  while true do
+    local chunk = f:read(16384)
+    if not chunk then break end
+    local i = 1
+    while i <= #chunk do
+      local n, err, last = c:send(chunk, i)
+      if n then i = n + 1 elseif last and last >= i then i = last + 1 else f:close() return end
+      if err == "closed" then f:close() return end
+    end
+  end
+  f:close()
+end
+
 function M.serveHttp(c, leaderIp)
   c:settimeout(3)
   local request = c:receive("*l") or ""
@@ -644,6 +697,26 @@ function M.serveHttp(c, leaderIp)
     for _, candidate in ipairs({ U.home() .. "/share/install.sh" }) do body = U.read(candidate) if body then break end end
   elseif path == "/swarm/manifest.txt" then
     body = M.manifest()
+  elseif path:match("^/swarm/packages/") or path:match("^/swarm/linux/dist/") then
+    -- apps and Shulker Linux images: the main fetches them from GitHub once and keeps a copy, so the
+    -- swarm does not hit the Internet Gateway from every computer at once. 503 = fetching, ask again
+    local rel = path:sub(#"/swarm/" + 1)
+    if rel:find("..", 1, true) or not rel:match("^[%w%._/%-]+$") then
+      c:send("HTTP/1.0 404 Not Found\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n")
+      c:close()
+      return
+    end
+    local file, state = M.cached(rel)
+    if file then
+      M.sendFile(c, file)
+      c:close()
+      return
+    end
+    local msg = state == "missing" and "not in the repository\n" or "fetching, try again in a moment\n"
+    c:send(("HTTP/1.0 %s\r\nContent-Length: %d\r\nRetry-After: 3\r\nConnection: close\r\n\r\n%s")
+      :format(state == "missing" and "404 Not Found" or "503 Service Unavailable", #msg, msg))
+    c:close()
+    return
   elseif path:match("^/swarm/src/") then
     local rel = path:sub(#"/swarm/src/" + 1)
     if not rel:find("%.%.") and M.manifest():find(" " .. rel:gsub("%p", "%%%0") .. "\n", 1) then

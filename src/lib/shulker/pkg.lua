@@ -21,6 +21,13 @@ function M.conf()
     local k, v = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
     if k and v ~= "" then c[k] = v end
   end
+  -- a swarm member gets everything from its main (the main keeps one copy for all, see swarm.cached):
+  -- every computer going to GitHub at once overwhelms the Internet Gateway
+  local okS, swarm = pcall(require, "shulker.swarm")
+  if okS and U.exists(swarm.confPath()) and not os.getenv("SHULKER_REPO") then
+    local sc = swarm.loadConf()
+    if sc.role == "worker" then c.repo, c.branch, c.swarm = "http://" .. swarm.leaderOf(sc), "swarm", true end
+  end
   if os.getenv("SHULKER_REPO") then c.repo = os.getenv("SHULKER_REPO") end
   if os.getenv("SHULKER_BRANCH") then c.branch = os.getenv("SHULKER_BRANCH") end
   return c
@@ -54,6 +61,13 @@ end
 function M.fetch(url, dest)
   local cmd = M.verifiedTLS() and "curl -fsSL --max-time 120 -o %s %s" or "wget -q -T 30 -O %s %s"
   local out, code = U.capture(cmd:format(U.q(dest), U.q(url)))
+  -- the swarm main answers 503 while it fetches a file from GitHub for the first time: wait for it
+  local tries = 0
+  while code ~= 0 and out:match("503") and url:match("^http://") and tries < 100 do
+    tries = tries + 1
+    os.execute("sleep 3")
+    out, code = U.capture(cmd:format(U.q(dest), U.q(url)))
+  end
   if code ~= 0 then
     os.remove(dest)
     out = out:gsub("wget: note: TLS certificate validation not implemented\n?", "")
