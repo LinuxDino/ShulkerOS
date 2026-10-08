@@ -52,6 +52,14 @@ while i <= #arg do
   i = i + 1
 end
 
+-- the assistant is optional: setup (or `shulker enable claude`) turns it on
+do
+  local setup = U.read(U.etcdir() .. "/setup.conf") or ""
+  if setup:match("\nclaude=off") or setup:match("^claude=off") then
+    U.die("The Claude assistant is turned off. Turn it on with `shulker enable claude` (or `shulker setup`).")
+  end
+end
+
 local cfg = api.loadConfig()
 local function apply(k, v)
   if v == nil then return end

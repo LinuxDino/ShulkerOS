@@ -94,10 +94,12 @@ EOF
 	cp "$IMG" "$NODE"
 	printf 'auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n' > "$B/interfaces"
 	printf '# Shulker Swarm (see `man swarm`)\nleader=10.42.0.1\nport=4242\nrole=worker\n' > "$B/swarm.conf"
+	printf '# preset by the Swarm Node drive: no setup wizard\nrole=worker\nclaude=off\n' > "$B/setup.conf"
 	debugfs -w -f - "$NODE" > "$B/debugfs-node.log" 2>&1 <<NODECMDS
 rm /etc/network/interfaces
 write $B/interfaces /etc/network/interfaces
 write $B/swarm.conf /etc/shulker/swarm.conf
+write $B/setup.conf /etc/shulker/setup.conf
 set_inode_field /etc/shulker/swarm.conf mode 0100600
 NODECMDS
 	if grep -qi "error\|could not\|no space" "$B/debugfs-node.log"; then cat "$B/debugfs-node.log" >&2; exit 1; fi

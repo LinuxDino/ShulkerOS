@@ -38,6 +38,21 @@ local a = arg
 local cmd = a[1]
 if not cmd or cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(cmd and 0 or 1) end
 
+if cmd == "setup" then
+  os.execute(U.q(U.home() .. "/bin/shulker-setup"))
+  os.exit(0)
+elseif cmd == "enable" or cmd == "disable" then
+  if a[2] ~= "claude" then U.die("usage: shulker enable|disable claude") end
+  local path = U.etcdir() .. "/setup.conf"
+  local lines, found = U.lines(path), false
+  for i, l in ipairs(lines) do if l:match("^claude=") then lines[i] = "claude=" .. (cmd == "enable" and "on" or "off") found = true end end
+  if not found then lines[#lines + 1] = "claude=" .. (cmd == "enable" and "on" or "off") end
+  U.mkdir(U.etcdir())
+  U.write(path, table.concat(lines, "\n") .. "\n")
+  print("Claude assistant " .. (cmd == "enable" and "on" or "off") .. ".")
+  os.exit(0)
+end
+
 if cmd == "version" or cmd == "-v" or cmd == "--version" then
   local conf = pkg.conf()
   print(("Shulker OS %s"):format(U.trim(U.read(U.home() .. "/VERSION") or U.VERSION)))

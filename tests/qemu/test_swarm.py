@@ -71,6 +71,12 @@ def main():
         check(seen >= want, "all %d nodes joined by themselves (%d online)" % (want, seen), out)
         print(ANSI.sub("", out))
 
+        time.sleep(8)                          # a few heartbeats, so there are traffic rates
+        rc, out = m.run("swarm top --once")
+        plain = ANSI.sub("", out)
+        check(rc == 0 and "MAIN" in plain and "Internet Gateway" in plain and len(re.findall(r"node\d+", plain)) >= want
+              and "rx" in plain, "swarm top shows gateway, main, every node and traffic", out)
+
         rc, out = workers[0].run("hostname; ip -4 -o addr show eth0")
         check(re.search(r"node\d+", out) and "10.42.0." in out, "the early worker got an address and a node name", out)
 

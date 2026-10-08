@@ -46,7 +46,7 @@ if mode == "leader" then
   if not server then log("cannot listen on port", conf.port, err) os.exit(1) end
   server:settimeout(0)
   log("leader listening on port", conf.port)
-  local lastReap = 0
+  local lastReap, lastGw = 0, 0
   while true do
     local ready = socket.select({ server }, nil, 1)
     if ready and #ready > 0 then
@@ -67,6 +67,12 @@ if mode == "leader" then
       end
     end
     if os.time() - lastReap >= 2 then L.reap() lastReap = os.time() end
+    -- is the Internet Gateway there? (in the background, the loop must not wait for ping)
+    if os.time() - (lastGw or 0) >= 30 then
+      lastGw = os.time()
+      os.execute("(ping -c 1 -W 3 " .. S.GATEWAY_IP .. " >/dev/null 2>&1 && echo reachable || " ..
+        "(nc -z -w 5 160.79.104.10 443 >/dev/null 2>&1 && echo reachable || echo 'not found')) > /tmp/swarm-gateway 2>/dev/null &")
+    end
   end
 end
 

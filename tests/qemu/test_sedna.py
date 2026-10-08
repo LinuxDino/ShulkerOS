@@ -159,6 +159,7 @@ def install_mode(args):
         used = used_kb(df_after) - used_kb(df_before)
         print("  ..    installer used %d KB of the root disk" % used)
         check(used < 400, "install is small (%d KB)" % used)
+        vm.sh("mkdir -p /etc/shulker && echo role=personal > /etc/shulker/setup.conf")   # the wizard has its own test
         vm.send("exec sh -l")     # a login shell picks up /etc/profile.d/shulker.sh
         vm.raw_shell()
         network(vm)
@@ -207,6 +208,7 @@ def install_mode(args):
 def datapack_mode(args):
     with Sedna(args.rootfs, args.kernel, builtin=args.builtin, log=args.log) as vm:
         rc, df_before = vm.run("busybox df -k / | tail -n 1")
+        vm.sh("mkdir -p /etc/shulker && echo role=personal > /etc/shulker/setup.conf")
         vm.send("exec sh -l")
         vm.raw_shell()
         rc, out = vm.run("command -v claude task shulker")
@@ -231,18 +233,63 @@ def hdd_mode(args):
         common(vm, "install")
 
 
+def wizard_mode(args):
+    # the first-login setup wizard on the preloaded drive, driven with keys and one mouse click
+    vm = Sedna(args.rootfs, args.kernel, builtin=args.builtin, log=args.log)
+    vm.keep_wizard = True
+    vm.start()
+    try:
+        c = vm.child
+        c.expect("Start setup", timeout=60)
+        c.send("\r")
+        c.expect("Terms of Service", timeout=30)
+        c.expect("I accept", timeout=30)
+        # click "I accept" (column 4, row 22 on 80x24) with an SGR mouse report
+        c.send("\x1b[<0;5;22M\x1b[<0;5;22m")
+        c.expect("Name this computer", timeout=30)
+        c.send("\x7f" * 20 + "base\r")
+        c.expect("Password for root", timeout=30)
+        c.send("secret12\r")
+        c.send("secret12\r")
+        c.expect("What is this computer for", timeout=30)
+        c.send("\r")                                   # Personal computer
+        c.expect("Network", timeout=30)
+        c.send("\x1b[B\x1b[B\r")                      # "No network for now"
+        c.expect("Extras", timeout=30)
+        c.send(" ")                                    # SSH on
+        c.send("\r")
+        c.expect("Ready", timeout=30)
+        out = c.before
+        c.send("\r")
+        c.expect("Finish", timeout=120)
+        apply_out = ANSI.sub("", c.before)
+        c.send("\r")
+        c.expect([r"# ", r"\$ "], timeout=60)
+        vm.raw_shell()
+        check("FAIL" not in apply_out, "wizard applied every step", apply_out)
+        rc, out = vm.run("hostname; cat /etc/shulker/setup.conf; ls /etc/shulker/ssh.enabled; grep '^root:' /etc/shadow | cut -c1-9")
+        check("base" in out and "tos=1" in out and "role=personal" in out, "name, terms version and role saved", out)
+        check("ssh.enabled" in out and "root:$6$" in out, "SSH on and the password set (sha512 hash)", out)
+        rc, out = vm.run("pidof dropbear")
+        check(rc == 0, "dropbear started", out)
+        rc, out = vm.run("echo | sh -l -c 'echo login-ok' 2>&1 | tail -n 1")
+        check("login-ok" in out, "the wizard does not come back at the next login", out)
+    finally:
+        vm.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sedna", default="work/sedna")
     ap.add_argument("--builtin", required=True)
-    ap.add_argument("--mode", choices=["install", "datapack", "hdd"], default="install")
+    ap.add_argument("--mode", choices=["install", "datapack", "hdd", "wizard"], default="install")
     ap.add_argument("--log")
     ap.add_argument("--rootfs", help="boot this disk image instead of SEDNA/rootfs.ext2 (hdd mode)")
     args = ap.parse_args()
     args.rootfs = args.rootfs or os.path.join(args.sedna, "rootfs.ext2")
     args.kernel = os.path.join(args.sedna, "Image")
     print("Shulker OS on Sedna (QEMU), %s mode" % args.mode, flush=True)
-    {"install": install_mode, "datapack": datapack_mode, "hdd": hdd_mode}[args.mode](args)
+    {"install": install_mode, "datapack": datapack_mode, "hdd": hdd_mode, "wizard": wizard_mode}[args.mode](args)
     print("\n%d failure(s)" % len(FAILS))
     for f in FAILS:
         print("  - " + f)

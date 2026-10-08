@@ -23,6 +23,7 @@ local USAGE = [==[
 usage: swarm init [--work]          make this computer the main node (--work: it runs jobs too)
        swarm join [MAIN-IP]         make this computer a worker (default main 10.42.0.1)
        swarm status                 nodes, load, memory, disk, jobs
+       swarm top                    live topology: gateway, main, nodes, traffic
        swarm run [--on NODE] CMD    run CMD on every node (or one) and show the output
        swarm submit CMD             queue CMD for any free node, print the job number
        swarm map 'CMD {}' ITEM...   one job per ITEM ({} = the item) spread over the nodes
@@ -155,6 +156,94 @@ if cmd == "status" or cmd == "st" then
     r.running, r.running == 1 and "" or "s", r.queued,
     r.enrolling > 0 and (", accepting new nodes for " .. S.age(r.enrolling)) or "")))
   if #r.nodes == 0 then print("No nodes yet. Power on the workers, or `swarm join` on them; `swarm enroll` if the window closed.") end
+elseif cmd == "top" or cmd == "topology" then
+  -- live topology: internet, gateway, main node, workers (drones later under their base), traffic
+  local T = require("shulker.tui")
+  local function rate(bps)
+    bps = tonumber(bps)
+    if not bps then return "   -  " end
+    if bps >= 1048576 then return ("%5.1fM"):format(bps / 1048576) end
+    if bps >= 1024 then return ("%5.1fK"):format(bps / 1024) end
+    return ("%5dB"):format(math.floor(bps))
+  end
+  local once = a[2] == "--once"
+  if not once then T.start() end
+  local scroll = 0
+  local ok, err = pcall(function()
+    while true do
+      local r = call({ op = "status" })
+      T.clear()
+      local online, rxSum, txSum = 0, 0, 0
+      for _, n in ipairs(r.nodes) do
+        if n.online then online = online + 1 rxSum = rxSum + (n.rx_rate or 0) txSum = txSum + (n.tx_rate or 0) end
+      end
+      T.at(1, 1, string.rep(" ", T.W), "bright", "purple")
+      T.at(2, 1, "Shulker Swarm topology", "bright", "purple")
+      local right = ("%d/%d online  %s"):format(online, #r.nodes, os.date("%H:%M:%S"))
+      T.at(T.W - #right, 1, right, "lavender", "purple")
+      -- internet and gateway
+      local gwUp = r.gateway == "reachable"
+      T.at(3, 3, "( Internet )", gwUp and "aqua" or "gray")
+      T.g(16, 3, "qq", gwUp and "aqua" or "gray")
+      T.at(19, 3, "Internet Gateway " .. S.GATEWAY_IP, gwUp and "bright" or "gray")
+      T.at(48, 3, gwUp and "reachable" or (r.gateway == "unknown" and "checking..." or "not found"), gwUp and "lime" or "gold")
+      T.g(9, 4, "x", "purple")
+      -- the main node, then the hub with the workers
+      local main
+      for _, n in ipairs(r.nodes) do if n.main then main = n end end
+      local mainName = main and main.name or (r.leader.host ~= "" and r.leader.host or "main")
+      T.g(9, 5, "t", "purple")
+      T.at(11, 5, ("%-8s"):format(mainName), "bright")
+      T.at(20, 5, "MAIN", "bright", "purple")
+      T.at(26, 5, ("%-15s"):format(r.leader.ip or S.LEADER_IP), "white")
+      if main then T.at(42, 5, "rx " .. rate(main.rx_rate) .. "/s  tx " .. rate(main.tx_rate) .. "/s", "lavender") end
+      T.g(9, 6, "x", "purple")
+      T.g(9, 7, "mqqk", "purple")
+      T.at(14, 7, "hub", "gray")
+      local y = 8
+      local workers = {}
+      for _, n in ipairs(r.nodes) do if not n.main then workers[#workers + 1] = n end end
+      local room = T.H - 12
+      local first = math.min(scroll, math.max(0, #workers - room))
+      for i = first + 1, math.min(#workers, first + room) do
+        local n = workers[i]
+        local last = i == #workers
+        T.g(12, y, last and "mqq" or "tqq", "purple")
+        local st = n.stats or {}
+        local state, fg = "idle", "lime"
+        if not n.online then state, fg = "off", "pink" elseif n.busy then state, fg = "job " .. n.busy, "gold" end
+        T.at(16, y, ("%-8s"):format(n.name), n.online and "bright" or "gray")
+        T.at(25, y, ("%-15s"):format(n.ip or "?"), n.online and "white" or "gray")
+        T.at(41, y, ("%-8s"):format(state), fg)
+        if n.online then
+          T.at(50, y, "rx " .. rate(n.rx_rate) .. " tx " .. rate(n.tx_rate), "lavender")
+          T.at(71, y, ("ld %.1f"):format(st.load or 0), "gray")
+        else
+          T.at(50, y, "last seen " .. S.age(n.seen) .. " ago", "gray")
+        end
+        y = y + 1
+      end
+      if #workers > room then T.at(16, y, ("(%d more: Up/Down to scroll)"):format(#workers - room), "gray") y = y + 1 end
+      if #workers == 0 then T.at(16, y, "no workers yet: power them on (Swarm Node drive) or `swarm join`", "gray") end
+      -- totals and recent events
+      local by = T.H - 3
+      T.hline(1, by, T.W, "purple")
+      T.at(2, by + 1, ("jobs: %d running, %d queued    swarm traffic: rx %s/s  tx %s/s%s"):format(r.running, r.queued,
+        U.trim(rate(rxSum)), U.trim(rate(txSum)), r.enrolling > 0 and ("    accepting nodes " .. S.age(r.enrolling)) or ""), "white")
+      T.at(2, by + 2, r.log[1] and ("last event: " .. r.log[1]) or "", "gray")
+      T.at(T.W - 18, T.H, "q quit  e enroll", "gray")
+      T.flush()
+      if once then return end
+      local ev = T.event(2000)
+      if ev.type == "key" then
+        if ev.key == "q" or ev.key == "esc" or ev.key == "ctrl-c" then return end
+        if ev.key == "down" then scroll = scroll + 1 elseif ev.key == "up" then scroll = math.max(0, scroll - 1) end
+        if ev.key == "e" then call({ op = "enroll", seconds = 1800 }) end
+      end
+    end
+  end)
+  if not once then T.stop() end
+  if not ok and not tostring(err):find("interrupted") then U.die("swarm: " .. tostring(err)) end
 elseif cmd == "run" then
   local target, i = "all", 2
   if a[2] == "--on" then target, i = a[3], 4 end

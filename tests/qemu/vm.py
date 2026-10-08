@@ -21,6 +21,7 @@ class Sedna:
         """lan: a multicast group like "230.0.0.1:1234": VMs on the same group share one Ethernet segment
         (like OC2 computers cabled to one hub); mac: this VM's MAC address on it."""
         self.lan, self.mac = lan, mac
+        self.keep_wizard = False
         self.rootfs, self.kernel, self.builtin = rootfs, kernel, builtin
         self.memory, self.copy, self.log, self.hostfwd = memory, copy, log, hostfwd
         self.child = None
@@ -61,7 +62,13 @@ class Sedna:
     def login(self):
         self.child.expect(r"(?m)^\r*[\w-]+ login: ", timeout=180)
         self.child.sendline("root")
-        self.child.expect([r"# ", r"\$ "], timeout=60)
+        i = self.child.expect([r"# ", r"\$ ", "Shulker OS Setup"], timeout=60)
+        if i == 2 and not self.keep_wizard:
+            # the first-login setup wizard: skip it ("s"), tests that need it drive it themselves
+            self.child.send("s")
+            self.child.expect([r"# ", r"\$ "], timeout=60)
+        if i == 2 and self.keep_wizard:
+            return
         self.raw_shell()
 
     def raw_shell(self):

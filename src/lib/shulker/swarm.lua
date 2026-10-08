@@ -72,6 +72,7 @@ function M.stats()
   local total = tonumber(meminfo:match("MemTotal:%s*(%d+)")) or 0
   local avail = tonumber(meminfo:match("MemAvailable:%s*(%d+)")) or 0
   local df = U.capture("df -k / | tail -n 1")
+  local rx, tx = (U.read("/proc/net/dev") or ""):match("eth0:%s*(%d+)%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+(%d+)")
   local f = {}
   for w in df:gmatch("%S+") do f[#f + 1] = w end
   return {
@@ -81,6 +82,7 @@ function M.stats()
     mem_total = total, mem_free = avail,
     disk_total = tonumber(f[2] or ""), disk_free = tonumber(f[4] or ""),
     uptime = math.floor(readNum("/proc/uptime", "^(%S+)") or 0),
+    rx = tonumber(rx), tx = tonumber(tx),
     version = U.trim(U.read(U.home() .. "/VERSION") or U.VERSION),
   }
 end
@@ -113,7 +115,7 @@ end
 -- jobs:   list of { id, cmd, target = "any"|"all"|name, node, state = queued|running|done|failed|lost,
 --                   rc, out, created, started, finished, timeout, group }
 function M.newLeader(conf)
-  local L = { conf = conf, nodes = {}, jobs = {}, nextJob = 1, enrollUntil = 0, log = {} }
+  local L = { conf = conf, nodes = {}, jobs = {}, nextJob = 1, enrollUntil = 0, log = {}, mainMac = M.mac() }
 
   local statePath = (os.getenv("SHULKER_SWARM_STATE") or "/tmp/swarm-state.json")
   local function save()
@@ -216,7 +218,14 @@ function M.newLeader(conf)
     local mac = msg.stats and msg.stats.mac
     local n = mac and L.nodes[mac]
     if not n then return { error = "unknown node: join first", rejoin = true } end
-    n.seen, n.stats, n.ip = os.time(), msg.stats, msg.stats.ip
+    -- traffic rates from the byte counters of the last two heartbeats
+    local now = os.time()
+    if n.stats and n.stats.rx and msg.stats.rx and n.seen and now > n.seen then
+      local dt = now - n.seen
+      n.rxRate = math.max(0, (msg.stats.rx - n.stats.rx) / dt)
+      n.txRate = math.max(0, (msg.stats.tx - n.stats.tx) / dt)
+    end
+    n.seen, n.stats, n.ip = now, msg.stats, msg.stats.ip
     -- results of finished jobs
     for _, r in ipairs(msg.results or {}) do
       local j = L.job(r.id)
@@ -241,7 +250,8 @@ function M.newLeader(conf)
     local nodes = {}
     for _, n in pairs(L.nodes) do
       nodes[#nodes + 1] = { name = n.name, mac = n.mac, ip = n.ip, online = online(n), busy = n.busy,
-                            seen = n.seen and (os.time() - n.seen) or nil, stats = n.stats }
+                            seen = n.seen and (os.time() - n.seen) or nil, stats = n.stats,
+                            rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac }
     end
     table.sort(nodes, function(a, b)
       return (tonumber(a.name:match("%d+")) or 0) < (tonumber(b.name:match("%d+")) or 0)
@@ -250,7 +260,9 @@ function M.newLeader(conf)
     for _, j in ipairs(L.jobs) do
       if j.state == "queued" then q = q + 1 elseif j.state == "running" then r = r + 1 end
     end
-    return { ok = true, nodes = json.array(nodes), queued = q, running = r,
+    local gw = U.trim(U.read("/tmp/swarm-gateway") or "")
+    return { ok = true, nodes = json.array(nodes), queued = q, running = r, gateway = gw ~= "" and gw or "unknown",
+             leader = { ip = M.ip(), host = U.trim(U.read("/etc/hostname") or "") },
              enrolling = math.max(0, L.enrollUntil - os.time()), log = json.array(L.log) }
   end
 

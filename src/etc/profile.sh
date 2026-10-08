@@ -41,3 +41,9 @@ alias neofetch='shulkerfetch'
 alias ask='claude -p'
 
 [ -r /etc/shulker/profile.local ] && . /etc/shulker/profile.local
+
+# first login: the setup wizard (skippable; `shulker setup` runs it again)
+if [ -t 0 ] && [ -t 1 ] && [ ! -f /etc/shulker/setup.conf ] && [ "$(id -u)" = 0 ] && [ -x "$SHULKER_HOME/bin/shulker-setup" ]; then
+	"$SHULKER_HOME/bin/shulker-setup"
+	[ -f /etc/hostname ] && hostname -F /etc/hostname 2>/dev/null
+fi
