@@ -26,6 +26,12 @@ usage: shulker version                 version, where it's installed, repository
        shulker install APP...          install apps (to /usr/local/shulker)
        shulker remove APP...           remove apps
        shulker doctor                  check disk, services, network and Claude
+       shulker linux [status]          kernel, RAID support and drives
+       shulker linux kernel            upgrade to the Shulker Linux kernel (/boot/Image)
+       shulker linux install [DEV]     write Shulker Linux to an empty drive (then swap drives)
+       shulker disks [setup --raid0|--linear|--raid1|--separate]   extra drives as /data
+       shulker setup                   run the setup wizard again
+       shulker enable|disable claude   turn the Claude assistant on or off
        shulker uninstall [--purge]     remove Shulker OS from this disk (--purge: also ~/.shulker)
 see `man shulker`]==]
 
@@ -50,6 +56,72 @@ elseif cmd == "enable" or cmd == "disable" then
   U.mkdir(U.etcdir())
   U.write(path, table.concat(lines, "\n") .. "\n")
   print("Claude assistant " .. (cmd == "enable" and "on" or "off") .. ".")
+  os.exit(0)
+elseif cmd == "linux" or cmd == "disks" then
+  local L = require("shulker.linux")
+  local function log(s) print(c("accent", "::") .. " " .. s) end
+  local function confirm(q)
+    if a[#a] == "--yes" or a[#a] == "-y" then return true end
+    local ans = require("shulker.chat").ttyRead(q .. " [y/N] ")
+    return ans and ans:lower():match("^y")
+  end
+  local function showDrives()
+    for _, d in ipairs(L.drives()) do
+      local what = d.root and "system (boot)" or d.md and ("in " .. d.md) or d.mount and ("mounted at " .. d.mount) or "free"
+      print(("  %-9s %7.1f MB  %s"):format(d.dev, d.kb / 1024, what))
+    end
+  end
+  local sub = a[2] or "status"
+  if cmd == "linux" and sub == "status" then
+    print(c("bright", L.osName()) .. "  kernel " .. U.trim(U.capture("uname -r")))
+    print("RAID support: " .. (L.hasMD() and c("ok", "yes") or c("warn", "no (stock Sedna kernel)")))
+    print("image source: " .. L.base())
+    showDrives()
+  elseif cmd == "linux" and sub == "kernel" then
+    local ok, msg = L.upgradeKernel(log)
+    if not ok then U.die("shulker: " .. msg) end
+    print(msg)
+  elseif cmd == "linux" and sub == "install" then
+    local dev = a[3] and not a[3]:match("^%-") and a[3]
+    if not dev then
+      local spare = L.spare()
+      if #spare == 0 then U.die("shulker: no free drive. Put an empty hard drive (16 MB or more) in the computer.") end
+      dev = spare[1].dev
+    end
+    print(("This erases %s and writes Shulker Linux to it. Your /root, /etc/shulker, passwords,"):format(dev))
+    print("hostname and network settings are copied over.")
+    if not confirm("Erase " .. dev .. "?") then os.exit(1) end
+    local ok, err = L.installTo(dev, log)
+    if not ok then U.die("shulker: " .. err) end
+    print(c("ok", "Shulker Linux is on " .. dev .. "."))
+    print("Shut down, then swap the two drives so that one is first, and start the computer.")
+    print("Keep the old drive as a backup until everything works.")
+  elseif cmd == "disks" and (sub == "status" or sub == "list") then
+    showDrives()
+    local conf = L.disksConf()
+    if conf.mode then print(("data: %s over %s, at /data"):format(conf.mode, conf.devices)) end
+    if U.exists("/proc/mdstat") then io.write(U.read("/proc/mdstat") or "") end
+  elseif cmd == "disks" and sub == "mount" then
+    local ok, err = L.mountDisks()
+    if not ok then U.die("shulker: " .. err) end
+  elseif cmd == "disks" and sub == "setup" then
+    local mode = L.hasMD() and "raid0" or "separate"
+    for _, x in ipairs(a) do
+      local m = x:match("^%-%-(%a+%d?)$")
+      if m == "raid0" or m == "linear" or m == "raid1" or m == "separate" then mode = m end
+    end
+    local spare = L.spare()
+    if #spare == 0 then U.die("shulker: no free drives (the system drive is never used for /data)") end
+    showDrives()
+    local names = {}
+    for _, d in ipairs(spare) do names[#names + 1] = d.dev end
+    if not confirm(("Erase %s and use them as /data (%s)?"):format(table.concat(names, " "), mode)) then os.exit(1) end
+    local ok, err = L.setupDisks(mode, spare, log)
+    if not ok then U.die("shulker: " .. err) end
+    print(c("ok", "Done.") .. " " .. U.trim(U.capture("df -h /data 2>/dev/null | tail -1")))
+  else
+    U.die("usage: shulker linux [status|kernel|install [DEV]]  |  shulker disks [status|setup [--raid0|--linear|--raid1|--separate]|mount]")
+  end
   os.exit(0)
 end
 

@@ -43,8 +43,17 @@ function M.saveBranch(branch)
 end
 
 ---------------------------------------------------------------- downloading
+-- curl with a CA bundle (Shulker Linux) checks certificates; BusyBox wget (stock Sedna) cannot
+function M.verifiedTLS()
+  if M._vtls == nil then
+    M._vtls = U.which("curl") ~= nil and U.exists("/etc/ssl/certs/ca-certificates.crt")
+  end
+  return M._vtls
+end
+
 function M.fetch(url, dest)
-  local out, code = U.capture(("wget -q -T 30 -O %s %s"):format(U.q(dest), U.q(url)))
+  local cmd = M.verifiedTLS() and "curl -fsSL --max-time 120 -o %s %s" or "wget -q -T 30 -O %s %s"
+  local out, code = U.capture(cmd:format(U.q(dest), U.q(url)))
   if code ~= 0 then
     os.remove(dest)
     out = out:gsub("wget: note: TLS certificate validation not implemented\n?", "")

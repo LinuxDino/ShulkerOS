@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds Shulker Linux: fnuecke/buildroot (branch sedna, pinned) + our external tree in linux/.
-#   tools/build-linux.sh [WORKDIR]    (default work/buildroot) -> dist/shulker-linux/{rootfs.ext2,Image}
+#   tools/build-linux.sh [WORKDIR]    (default work/buildroot) -> linux/dist/{Image,rootfs.ext2.gz,SHA256SUMS} (what `shulker linux` downloads)
 set -e
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -16,8 +16,10 @@ make BR2_EXTERNAL="$ROOT/linux" sedna-riscv64_defconfig >/dev/null
 support/kconfig/merge_config.sh -m .config "$ROOT/linux/buildroot.fragment" >/dev/null
 make BR2_EXTERNAL="$ROOT/linux" olddefconfig >/dev/null
 FORCE_UNSAFE_CONFIGURE=1 make BR2_EXTERNAL="$ROOT/linux" -j"$(nproc)"
-mkdir -p "$ROOT/dist/shulker-linux"
-cp output/images/rootfs.ext2 "$ROOT/dist/shulker-linux/rootfs.ext2"
-debugfs -R "dump /boot/Image $ROOT/dist/shulker-linux/Image" output/images/rootfs.ext2 2>/dev/null
-(cd "$ROOT/dist/shulker-linux" && sha256sum rootfs.ext2 Image > SHA256SUMS)
-echo "Shulker Linux: $ROOT/dist/shulker-linux"
+OUT="$ROOT/linux/dist"
+mkdir -p "$OUT"
+debugfs -R "dump /boot/Image $OUT/Image" output/images/rootfs.ext2 2>/dev/null
+cp output/images/rootfs.ext2 "$OUT/rootfs.ext2"
+(cd "$OUT" && sha256sum Image rootfs.ext2 > SHA256SUMS && gzip -9nf rootfs.ext2)
+echo "Shulker Linux: $OUT"
+ls -l "$OUT"

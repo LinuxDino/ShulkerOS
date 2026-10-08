@@ -26,6 +26,11 @@ start() {
 		printf 'Starting crond (Shulker jobs): '
 		crond -b -c "$ETC/crontabs" -L /tmp/crond.log && echo OK || echo FAIL
 	fi
+	# extra drives as /data (shulker disks setup)
+	if [ -f "$ETC/disks.conf" ]; then
+		printf 'Mounting /data: '
+		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/shulker" disks mount && echo OK || echo FAIL
+	fi
 	# Shulker Swarm (swarm init / swarm join / the Swarm Node drive)
 	if [ -f "$ETC/swarm.conf" ]; then
 		echo "Starting Shulker Swarm: $(sed -n 's/^role=//p' "$ETC/swarm.conf")"
