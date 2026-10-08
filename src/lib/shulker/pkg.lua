@@ -206,6 +206,10 @@ end
 -- keep the files outside SHULKER_HOME (profile, boot script, branding) in step with the new version
 function M.refreshSystem()
   local home = U.home()
+  -- running swarm services pick up the new code by restarting themselves when idle (see swarmd)
+  if U.exists(U.etcdir() .. "/swarm.conf") then
+    for _, m in ipairs({ "leader", "worker", "relay" }) do U.write("/tmp/swarmd-restart-" .. m, "1\n") end
+  end
   if U.isdir("/etc/profile.d") then os.execute(("cp %s /etc/profile.d/shulker.sh"):format(U.q(home .. "/etc/profile.sh"))) end
   if U.exists("/etc/init.d/S95shulker") then
     os.execute(("cp %s /etc/init.d/S95shulker && chmod 755 /etc/init.d/S95shulker"):format(U.q(home .. "/etc/rc.shulker")))

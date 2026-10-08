@@ -31,6 +31,20 @@ local function log(...)
   io.flush()
 end
 
+-- after `shulker update` (pkg.refreshSystem leaves a flag) a running service restarts itself with the
+-- new code, but only when it is idle: a worker between jobs, the main with no queued or running jobs
+-- (its job list lives in memory)
+local function restartIfUpdated(idle, sockets)
+  local flag = "/tmp/swarmd-restart-" .. mode
+  if not idle or not U.exists(flag) then return end
+  os.remove(flag)
+  log("Shulker OS was updated: restarting with the new version")
+  -- close our listening ports first: the restart helper would inherit them and keep them busy
+  for _, sk in ipairs(sockets or {}) do pcall(sk.close, sk) end
+  os.execute(("(sleep 2; SHULKER_HOME=%s %s services) >/dev/null 2>&1 &"):format(U.q(U.home()), U.q(U.home() .. "/bin/swarm")))
+  os.exit(0)
+end
+
 ---------------------------------------------------------------- leader
 if mode == "leader" then
   local conf = S.loadConf()
@@ -74,7 +88,13 @@ if mode == "leader" then
         c:close()
       end
     end
-    if os.time() - lastReap >= 2 then L.reap() lastReap = os.time() end
+    if os.time() - lastReap >= 2 then
+      L.reap()
+      lastReap = os.time()
+      local busy = false
+      for _, j in ipairs(L.jobs) do if j.state == "queued" or j.state == "running" then busy = true break end end
+      restartIfUpdated(not busy, { server, web })
+    end
     -- is the Internet Gateway there? (in the background, the loop must not wait for ping)
     if os.time() - (lastGw or 0) >= 30 then
       lastGw = os.time()
@@ -97,6 +117,7 @@ if mode == "relay" then
   log("relay for drones, to the main node", upstream)
   local function hostname() return conf.name or U.trim(U.read("/etc/hostname") or "base") end
   while true do
+    restartIfUpdated(true, { api, web })
     local ready = socket.select(web and { api, web } or { api }, nil, 5)
     if ready and ready[api] then
       local c = api:accept()
@@ -204,6 +225,7 @@ local lastDhcp = 0
 local goingHome = false
 while true do
   checkJob()
+  restartIfUpdated(not running and #results == 0)
   -- no address yet (the main node was off when this one booted): keep asking for one
   if not S.ip() and os.time() - lastDhcp >= 20 then
     lastDhcp = os.time()

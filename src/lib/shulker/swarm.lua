@@ -593,9 +593,14 @@ M.HTTP_PORT = 80
 
 -- manifest of the running install, built once (works for /opt/shulker and the data pack alike)
 local manifestCache
+local manifestKey
 function M.manifest()
-  if manifestCache then return manifestCache end
   local home = U.home()
+  -- rebuilt whenever this computer's own Shulker OS changes (shulker update): a stale list would make
+  -- every worker's update fail its checksums
+  local key = (U.read(home .. "/manifest.txt") or "") .. (U.read(home .. "/VERSION") or "")
+  if manifestCache and key == manifestKey then return manifestCache end
+  manifestKey = key
   local list = U.capture("cd " .. U.q(home) .. " && find . -type f ! -name manifest.txt ! -name '*.tmp' | sed 's|^./||' | LC_ALL=C sort")
   local lines = { "version " .. U.trim(U.read(home .. "/VERSION") or U.VERSION) }
   for path in list:gmatch("[^\n]+") do
