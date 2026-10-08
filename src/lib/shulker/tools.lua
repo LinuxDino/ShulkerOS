@@ -91,25 +91,44 @@ M.LIST = {
   { name = "job_log",
     description = "Read the end of a scheduled job's output log.",
     input_schema = obj({ id = STR("job id"), lines = INT("optional, default 40") }, { "id" }) },
+  { name = "swarm_status",
+    description = "The Shulker Swarm this computer belongs to: every computer (online, load, memory, disk, current job, alerts), every drone (battery, world position, modules, base), and the orders with their progress and pieces. Use it before answering anything about the swarm, the nodes or the drones.",
+    input_schema = obj({ order = INT("optional: one order's details, with each piece's output") }) },
+  { name = "swarm_order", risky = true,
+    description = "Give the swarm an order; the main computer splits it into pieces that computers or drones work on at the same time. command is one of: 'mine X1 Y1 Z1 X2 Y2 Z2' (dig a box with all free drones, world coordinates), 'home all' or 'home DRONE...' (drones back to their chargers), 'go DRONE X Y Z', 'run on all CMD' / 'run on NAME CMD' / 'run CMD' (shell command on every / one / any free computer), \"map 'CMD {}' ITEM...\" (one piece per item on free computers). Returns the order number; follow it with swarm_status.",
+    input_schema = obj({ command = STR("the order, e.g. mine 100 60 200 115 57 215") }, { "command" }) },
+  { name = "swarm_stop", risky = true,
+    description = "Stop an order: queued pieces are dropped and running ones are ended (drones stop where they are).",
+    input_schema = obj({ order = INT("order number") }, { "order" }) },
+  { name = "monitor_status",
+    description = "Sensors and alarms on this computer (Shulker monitor): energy storage percent, redstone inputs, comparator, furnace, memory, disk, drone battery, swarm offline count, the active alerts and the alert rules.",
+    input_schema = obj() },
 }
 
 ---------------------------------------------------------------- system prompt
 M.SYSTEM = [[
-You are Claude, running inside Shulker OS on an OpenComputers II computer in Minecraft. The computer emulates a 64-bit RISC-V machine running Sedna Linux: Linux 6.6, musl, BusyBox 1.36 (ash, awk, sed, grep, crond, wget, nc...), Lua 5.4 (cjson, luasocket, luaposix), MicroPython, the tcc C compiler and nano. There is no bash, curl, python3, git, apt or man-db. You talk to the user in their terminal (80x24, 16 colours).
+You are Claude, the assistant built into Shulker OS, on an OpenComputers II computer in Minecraft. The user reads you on an 80x24 terminal.
 
-Know the machine:
-- The root disk is an 8 MB ext2 image with about a megabyte free, and RAM is a few tens of MB. Keep files and output small; check free space (df) before writing anything big. /tmp and /var/log are RAM disks that are cleared on reboot.
-- The CPU is emulated and slow: avoid heavy loops, prefer BusyBox tools and Lua over compiling.
-- Internet only works through an Internet Gateway block, with a static address (no DHCP or DNS behind the gateway): `netcfg` sets it up. HTTPS works through BusyBox wget but certificates are not verified.
-- In-game blocks and items are reached through the OC2 device bus: list_devices, device_methods, call_device (the HLAPI `devices` Lua library; `lsdev.lua` lists them in the shell). OC2's helper scripts are in /mnt/builtin/bin.
-- Shulker OS commands: claude, task (to-do list and scheduled jobs), shulker (packages and updates), shulkerfetch, man, netcfg, sshctl. Every one has a man page.
+Answer style, always:
+- Short. Most answers are 1 to 5 lines. No greeting, no restating the question, no summary at the end, no offers of further help.
+- Do the work with the tools, then report the result in a line or two. Don't announce what you are about to do or narrate each tool call.
+- Plain text: no headings, no tables, no bold. Commands on their own indented line. Lists only when there really are several items.
+- If something is unclear, ask one short question instead of guessing.
+
+The machine: a RISC-V computer running Sedna Linux (Linux 6.6, BusyBox ash, Lua 5.4 with cjson, luasocket, luaposix; nano). No bash, python3, git or apt. Shulker drives have the Shulker Linux kernel (RAID, ext4) and mdadm; MicroPython and tcc may be removed. The system disk is 8 MB with about 1 MB free: keep files small and check df before writing much. /tmp is RAM. The CPU is slow. Big storage, if set up, is /data (RAID over the other drives).
+
+Shulker OS (each command has a man page):
+- Swarm: one main computer (10.42.0.1) hands out addresses, keeps the list of computers and runs orders. Workers ("Lab" computers, node1, node2, ...) join it and run jobs. Drones are OC2 robots (drone1, ...) linked by a tunnel card to a drone base (a Lab computer with up to 3 tunnel cards, `swarm base`); they report battery and position, go home to charge below 15-20 %, and use world coordinates once `drone origin X Y Z` is set. Orders: mine, home, go, run, map (swarm_order); computers never take drone pieces and drones never take computer pieces. The user's screen for all this is `control` (Control Center); `swarm status`, `swarm drones`, `swarm orders`, `swarm top` in the shell.
+- Updates and apps: the main updates from GitHub (`shulker update`), every other member updates from the main (`swarm run --on all shulker update`). `shulker mkdisk` on a spare computer writes ready Lab or Robot drives. `shulker disks setup` makes /data. `shulker linux kernel` installs the RAID kernel.
+- monitor: sensors and alarm rules (redstone alarms); dashboard: status wall on a projector; desktop: full-screen launcher; task: to-do list and scheduled jobs; netcfg: network; sshctl: SSH.
+- The internet goes through one Internet Gateway (reached at 10.42.0.254 in a swarm). HTTPS through BusyBox wget does not verify certificates.
 
 How to work:
-- Use the tools to look before you answer questions about this computer; don't guess file contents or device names.
-- Risky tools (commands, file changes, device calls, jobs) ask the user for permission first; if they deny one, don't retry it the same way: ask what they want instead.
-- The user's task list is theirs: add, change or remove tasks only when they ask or clearly agree.
-- Scheduled Claude jobs run later without the user; give them a precise prompt and only the tools they need.
-- Answer in plain text suited to a small terminal: short paragraphs, simple lists, no tables or headings, code in plain indented blocks. Be concise.]]
+- Look before you answer about this computer or the swarm: swarm_status, monitor_status, system_info, list_devices. Don't guess names, coordinates or numbers.
+- To make the swarm or drones do something, use swarm_order (the main splits the work). Use run_command only for this computer.
+- In-game blocks on this computer's bus: list_devices, device_methods, call_device.
+- Risky tools ask the user first; if they deny, don't retry the same way.
+- Change the task list only when the user asks.]]
 
 ---------------------------------------------------------------- helpers
 local function str(v, default)
@@ -345,6 +364,101 @@ function RUN.job_log(i)
   return U.clip(text, MAX_OUT), false
 end
 
+---------------------------------------------------------------- swarm and monitor
+local function swarmCall(msg)
+  local S = require("shulker.swarm")
+  local conf = S.loadConf()
+  if not conf.role then return nil, "this computer is not in a swarm (swarm init on the main, or a Lab drive)" end
+  if conf.role == "main" then conf.leader = "127.0.0.1" end
+  return S.call(conf, msg, 10)
+end
+
+function RUN.swarm_status(i)
+  local oid = num(i.order, nil)
+  if oid then
+    local r, err = swarmCall({ op = "orders", id = oid })
+    if not r then return err, true end
+    local o = r.orders[1]
+    if not o then return "no order " .. oid, true end
+    local out = { ("order %d: %s, %s, %d/%d done"):format(o.id, o.label, o.state, o.counts.done or 0, o.total) }
+    for _, p in ipairs(o.pieces) do
+      out[#out + 1] = ("  %s %s on %s%s"):format(p.state, p.label or "", p.node or p.target or "?", p.rc and (" exit " .. p.rc) or "")
+      if p.out and p.out ~= "" then out[#out + 1] = "    " .. U.clip((tostring(p.out):gsub("%s+$", "")), 300):gsub("\n", "\n    ") end
+    end
+    return U.clip(table.concat(out, "\n"), MAX_OUT), false
+  end
+  local st, err = swarmCall({ op = "status" })
+  if not st then return err, true end
+  local out = { ("main %s; %d queued, %d running jobs; gateway %s"):format(tostring(st.leader and st.leader.ip or "10.42.0.1"),
+    st.queued or 0, st.running or 0, tostring(st.gateway)) }
+  out[#out + 1] = "computers:"
+  local drones = {}
+  for _, n in ipairs(st.nodes or {}) do
+    local x = n.stats or {}
+    if type(x.drone) == "table" then drones[#drones + 1] = n else
+      out[#out + 1] = ("  %s %s %s load %.2f mem %d/%dK free, disk %sK free%s%s%s"):format(n.name, n.ip or "?",
+        n.online and (n.busy and ("busy job " .. n.busy) or "idle") or "OFFLINE", tonumber(x.load) or 0,
+        tonumber(x.mem_free) or 0, tonumber(x.mem_total) or 0, tostring(x.disk_free or "?"),
+        n.main and " (main)" or "", x.energy and (" energy " .. x.energy .. "%") or "",
+        (tonumber(x.alerts) or 0) > 0 and (" ALERTS " .. x.alerts) or "")
+    end
+  end
+  out[#out + 1] = "drones:"
+  if #drones == 0 then out[#out + 1] = "  none" end
+  for _, n in ipairs(drones) do
+    local d = n.stats.drone
+    local p = d.pos and ("%d %d %d%s"):format(d.pos.x or 0, d.pos.y or 0, d.pos.z or 0, d.world and "" or " (relative: no origin set)") or "?"
+    out[#out + 1] = ("  %s via %s %s battery %s%% at %s facing %s modules %s"):format(n.name, n.via or "?",
+      n.online and (n.busy and ("busy job " .. n.busy) or "idle") or "OFFLINE", tostring(d.charge or "?"), p,
+      tostring(d.facing or "?"), table.concat(type(d.modules) == "table" and d.modules or {}, ","))
+  end
+  local o = swarmCall({ op = "orders" })
+  out[#out + 1] = "orders:"
+  if not o or #o.orders == 0 then out[#out + 1] = "  none" end
+  for k, x in ipairs(o and o.orders or {}) do
+    if k > 8 then break end
+    out[#out + 1] = ("  #%d %s: %s, %d/%d done, %d running, %d failed"):format(x.id, x.label, x.state,
+      x.counts.done or 0, x.total, x.counts.running or 0, (x.counts.failed or 0) + (x.counts.lost or 0))
+  end
+  return U.clip(table.concat(out, "\n"), MAX_OUT), false
+end
+
+function RUN.swarm_order(i)
+  local O = require("shulker.orders")
+  local st, err = swarmCall({ op = "status" })
+  if not st then return err, true end
+  local o, perr = O.parse(str(i.command, ""), st)
+  if not o then return perr, true end
+  local r, oerr = swarmCall({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
+  if not r then return oerr, true end
+  return ("order %d started: %s (%d pieces%s)"):format(r.id, o.label, #o.pieces, o.note and ("; " .. o.note) or ""), false
+end
+
+function RUN.swarm_stop(i)
+  local r, err = swarmCall({ op = "cancel", order = num(i.order, 0), stop = true })
+  if not r then return err, true end
+  return ("order %d: %d piece(s) stopped"):format(num(i.order, 0), r.cancelled), false
+end
+
+function RUN.monitor_status()
+  local mon = require("shulker.monitor")
+  local st = mon.state(20)
+  local sensors = st and st.sensors or mon.read()
+  local out = { st and "monitor daemon: running" or "monitor daemon: not running (values read now)" }
+  local names = {}
+  for k in pairs(sensors) do names[#names + 1] = k end
+  table.sort(names)
+  for _, k in ipairs(names) do
+    local v = sensors[k]
+    out[#out + 1] = ("  %s = %s%s%s"):format(k, tostring(v.value), v.unit or "", v.label and (" (" .. v.label .. ")") or "")
+  end
+  out[#out + 1] = "alerts: " .. ((st and #(st.alerts or {}) > 0) and "" or "none")
+  for _, a in ipairs(st and st.alerts or {}) do out[#out + 1] = ("  %s: %s = %s"):format(a.name, a.sensor, tostring(a.value)) end
+  out[#out + 1] = "rules:"
+  for _, r in ipairs(mon.load().rules) do out[#out + 1] = ("  %s: %s %s %s -> %s"):format(r.name, r.sensor, r.op, r.value, r.action) end
+  return U.clip(table.concat(out, "\n"), MAX_OUT), false
+end
+
 ---------------------------------------------------------------- descriptions for the approval prompt
 local function short(s, n)
   s = tostring(s or ""):gsub("%s+", " ")
@@ -377,6 +491,8 @@ function M.describe(name, i)
     return "remove job " .. str(i.id) .. (j and (": " .. j.name) or "")
   end
   if name == "task_remove" then return "delete task #" .. str(i.id) end
+  if name == "swarm_order" then return "swarm order: " .. short(i.command, 150) end
+  if name == "swarm_stop" then return "stop swarm order #" .. str(i.order) end
   local ok, enc = pcall(json.encode, i)
   return ok and short(enc, 100) or name
 end

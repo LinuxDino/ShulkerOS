@@ -32,9 +32,9 @@ DESCRIPTION
 
 INTERACTIVE COMMANDS
   /model opus|sonnet    claude-opus-5-5 (default) or claude-sonnet-5-5
-  /effort LEVEL         low, medium (default), high, xhigh, max
-  /thinking MODE        updates (short progress notes, default), summarized
-                        (summaries of Claude's reasoning), omitted
+  /effort LEVEL         low (default), medium, high, xhigh, max
+  /thinking MODE        omitted (default: Claude thinks quietly), updates
+                        (short progress notes), summarized (its reasoning)
   /auto on|off          run tools without asking
   /clear                start a new conversation
   /cost                 tokens used and estimated cost

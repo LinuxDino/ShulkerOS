@@ -165,8 +165,14 @@ end)
 test("request body: adaptive thinking, effort, fallbacks, caching, no budget", function()
   local b = api.body(api.DEFAULTS, "sys", json.array({}), json.array({ { role = "user", content = "hi" } }))
   local s = json.encode(b)
-  truthy(s:find('"thinking":{"display":"updates","type":"adaptive"}', 1, true), s)
-  truthy(s:find('"output_config":{"effort":"medium"}', 1, true))
+  truthy(s:find('"thinking":{"display":"omitted","type":"adaptive"}', 1, true), s)
+  truthy(s:find('"output_config":{"effort":"low"}', 1, true))
+  local c2 = {}
+  for k, v in pairs(api.DEFAULTS) do c2[k] = v end
+  c2.thinking, c2.effort = "updates", "high"
+  local s2 = json.encode(api.body(c2, "sys", json.array({}), json.array({ { role = "user", content = "hi" } })))
+  truthy(s2:find('"thinking":{"display":"updates","type":"adaptive"}', 1, true), s2)
+  truthy(s2:find('"output_config":{"effort":"high"}', 1, true))
   truthy(s:find('"fallbacks":"default"', 1, true))
   truthy(s:find('"cache_control":{"type":"ephemeral"}', 1, true))
   truthy(s:find('"stream":true', 1, true))

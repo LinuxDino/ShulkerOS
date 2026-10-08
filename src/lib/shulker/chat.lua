@@ -83,7 +83,16 @@ function M.new(opts)
   S.system = S.kit.system
   local cwd = os.getenv("PWD")
   local host = U.trim((U.read("/etc/hostname") or "sedna"))
-  S.system = S.system .. ("\n\nThis session: host %s, user %s, started in %s."):format(host, os.getenv("USER") or "root", cwd or "/")
+  local okS, swarm = pcall(require, "shulker.swarm")
+  local role = "not in a swarm"
+  if okS and U.exists(swarm.confPath()) then
+    local sc = swarm.loadConf()
+    role = sc.role == "main" and "the swarm's main computer" or
+      ((sc.base == "1" and "a drone base" or (U.read(U.etcdir() .. "/setup.conf") or ""):match("role=drone") and "a drone" or "a swarm worker")
+        .. " (main " .. tostring(sc.leader) .. ")")
+  end
+  S.system = S.system .. ("\n\nThis session: host %s (%s), user %s, started in %s."):format(host, role,
+    os.getenv("USER") or "root", cwd or "/")
   return setmetatable(S, { __index = M })
 end
 

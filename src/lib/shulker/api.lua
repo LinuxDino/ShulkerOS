@@ -45,7 +45,7 @@ function M.forgetKey()
 end
 
 M.DEFAULTS = {
-  model = "claude-opus-5-5", effort = "medium", thinking = "updates", auto = false,
+  model = "claude-opus-5-5", effort = "low", thinking = "omitted", auto = false,
   max_tokens = 32000, api_url = M.URL, pin = true, idle_timeout = 180, retries = 4,
   tls_ack = false,
 }
@@ -319,7 +319,9 @@ end
 -- the request body for a conversation
 function M.body(cfg, system, tools, messages)
   local thinking = { type = "adaptive" }
-  if cfg.thinking == "updates" or cfg.thinking == "summarized" then thinking.display = cfg.thinking end
+  if cfg.thinking == "updates" or cfg.thinking == "summarized" or cfg.thinking == "omitted" then
+    thinking.display = cfg.thinking               -- omitted: Claude still thinks, the terminal stays quiet
+  end
   return {
     model = cfg.model,
     max_tokens = cfg.max_tokens,
