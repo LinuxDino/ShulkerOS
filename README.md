@@ -1,31 +1,34 @@
 # Shulker OS
 
-Linux with Claude built in, for the computers of [OpenComputers II](https://github.com/fnuecke/oc2) in Minecraft.
+A Linux for the computers of [OpenComputers II](https://github.com/fnuecke/oc2) in Minecraft: easy setup, many
+computers working together, drones, alarms and dashboards, and an optional Claude assistant.
 
 OC2 computers emulate a 64-bit RISC-V machine that boots **Sedna Linux**, a tiny Buildroot system (BusyBox, musl,
-Lua 5.4, an 8 MB disk). Shulker OS keeps it a real Linux and adds what makes it pleasant: Claude in the terminal,
-a to-do list with scheduled agent jobs, a package manager, man pages and a purple shulker theme. It is plain Lua and
-shell on top of Sedna's BusyBox, about 200 KB, and replaces nothing.
+Lua 5.4, an 8 MB disk). Shulker OS keeps it a real Linux and adds the rest in plain Lua and shell. **Shulker Linux**
+goes one step further: Sedna rebuilt with RAID, ext4, tmux and HTTPS that checks certificates.
 
 Sibling of [WardenOS](https://github.com/LinuxDino/WardenOS) for CC: Tweaked.
 
-- **Claude in the terminal**: `claude` opens a streaming chat, `claude -p "question"` answers once (pipes work:
-  `dmesg | claude -p "anything wrong?"`). Claude can run shell commands, read, write and edit files, list and call
-  **OC2 bus devices** (redstone, inventories, energy, any mod) through the `devices` HLAPI, inspect the network, and
-  manage your tasks and scheduled jobs. Before anything risky it asks: **Allow / Always / Deny**. Opus 5.5 or
-  Sonnet 5.5, effort low to max, `/auto` to stop asking
-- **Tasks**: `task` is an interactive to-do list (arrow keys, space, priorities), stored as plain todo.txt
-- **Scheduled jobs**: `task job add "daily 08:00" claude "check the disk and add a task if it's low"` runs a Claude
-  agent (or any shell command) later or repeatedly through BusyBox crond, with output logged for review
-- **A Linux that feels like one**: branded boot and login, motd, `shulkerfetch` (neofetch-style), a purple
-  `user@host:path` prompt, aliases, a man page for every command
-- **`shulker`**: update Shulker OS and install apps (`cowsay`, `fortune`, `matrix`, `snake`, `lsbus`) from GitHub,
-  every file checked against SHA-256 sums and the free disk space before anything changes; `shulker doctor`
-- **`netcfg`**: internet through the Internet Gateway in one command (`netcfg auto`), kept across reboots, with a
-  `netcfg test` that checks every hop
-- **`sshctl on`**: Dropbear SSH for the other computers on your in-game network
-- Two ways to install: one command on a computer with internet, or a **data pack** that gives every OC2 computer
-  Shulker OS (nothing written to its disk) plus a ready-made **"Shulker OS" hard drive**
+- **Setup wizard** at first start: terms, name, password, what the computer becomes (personal, main, worker, drone
+  base, drone), network, SSH, Claude on or off. `shulker setup` runs it again
+- **Shulker Swarm**: one main computer and as many workers as you build. The main hands out addresses and installs
+  Shulker OS over the network (`wget -qO- http://10.42.0.1/join | sh`), shares out jobs (`swarm run`, `swarm map`),
+  and shows every computer, drone and link with its traffic (`swarm top`)
+- **Drones**: OC2 robots join the swarm through a drone base, report battery and position, take commands
+  (`swarm drone drone1 go 10 0 5`), and fly home to charge by themselves
+- **Monitor and dashboard**: energy storage, redstone, comparators and furnaces as sensors, rules that sound a
+  redstone alarm or run a command (`monitor add low-power energy '<' 20 redstone:up`), and a status wall on a
+  **projector** (`dashboard start`)
+- **Desktop**: `desktop` is a full-screen launcher (mouse or keys) for tasks, swarm, drones, files, network, settings
+- **Drives**: `shulker disks setup` turns the other drive bays into `/data` (RAID 0/1/linear on Shulker Linux)
+- **Tasks and jobs**: `task` is an interactive to-do list (todo.txt); `task job` runs commands later or repeatedly
+  through crond
+- **A Linux that feels like one**: branded boot and login, motd, `shulkerfetch`, a purple prompt, aliases, a man page
+  for every command, `shulker` updates and apps, `netcfg auto` for the Internet Gateway, `sshctl` for SSH
+- **Claude, if you want it**: `claude` chats in the terminal, `claude -p` answers once, can run commands and use OC2
+  bus devices behind **Allow / Always / Deny**. Off with `shulker disable claude`
+- Install with one command, from the main computer over the network, or with a **data pack** that gives every OC2
+  computer Shulker OS plus ready-made hard drives (Shulker OS, Swarm Node, Drone)
 
 ## Install
 
@@ -58,10 +61,60 @@ server: `world/datapacks`) and restart the world or server. It contains:
   the computer's disk (Shulker OS uses about 9 KB of it for settings). Updates come with a new data pack
 - a preloaded **"Shulker OS" hard drive** (purple, offered as a large hard drive in OC2's creative tab): Sedna with Shulker OS
   installed in `/opt/shulker`, updatable with `shulker update`
+- a **"Shulker Swarm Node"** drive (magenta): the same, set up as a swarm worker that joins the main computer at
+  10.42.0.1 by itself, and a **"Shulker Drone"** drive (cyan) for robots
 
 `tools/build-datapack.sh --no-hdd` builds only the layer. The drive image contains Sedna's root file system (BusyBox, musl, Lua and more, under
 the GPL and other licenses listed in the `licenses/` folder of OC2's sedna-buildroot jar), so redistributing that
 pack means following those licenses.
+
+## Many computers: Shulker Swarm
+
+```
+             Internet Gateway (10.42.0.254)
+                    |
+  MAIN 10.42.0.1 ---+--- hub --- hub --- worker computers (node1, node2, ...)
+                    |
+                drone base (worker with a tunnel card) ~~ drones
+```
+
+1. On the main computer: `shulker setup` and choose **Main** (or `swarm init`). It hands out addresses
+   (10.42.0.100-250), keeps the list of computers and shares out the work. `swarm init --work` lets it work too.
+2. Each worker: put in a **"Shulker Swarm Node"** drive from the data pack and start it, or on a stock Sedna computer
+   run `udhcpc -i eth0 && wget -qO- http://10.42.0.1/join | sh`. It joins by itself.
+3. `swarm status`, `swarm top` (live topology and traffic), `swarm run --on all uptime`, `swarm map 'echo {}' 1 2 3`,
+   `swarm bench`. Hubs pass 32 frames a tick and every computer runs on its own thread, so 10 or 18 workers are fine.
+
+Drones (robots with a **"Shulker Drone"** drive) talk to a **drone base**: a worker with a tunnel card linked to the
+drone's tunnel module (`swarm base`). `drone status`, `drone go X Y Z`, `drone scan`; from the main computer
+`swarm drones` and `swarm drone NAME CMD`. Below 15 % battery a drone goes home to its charger. See `man swarm`,
+`man drone`.
+
+## Monitor, alarms and the projector
+
+`monitor` shows the sensors on the bus: energy (`energy`, `energy.1`, ...), `redstone.SIDE`, `comparator`,
+`furnace`, plus `mem`, `disk`, `load`, `drone.charge` and on the main `swarm.offline`. Rules:
+
+```
+monitor add low-power energy '<' 20 redstone:up        # signal 15 on top while low: wire a bell or lamps
+monitor add intruder redstone.north '>' 0 run:swarm run --on drone1 drone home
+monitor add lost-node swarm.offline '>' 0
+```
+
+`dashboard start` draws a status wall on a connected **projector** (energy bars, alerts, the swarm with every drone,
+tasks), and keeps it up across reboots. See `man monitor`, `man dashboard`.
+
+## Shulker Linux and drives
+
+Sedna's kernel has no RAID or ext4. [Shulker Linux](linux/README.md) is Sedna rebuilt from the same Buildroot with
+MD RAID, ext4, overlayfs and loop devices, plus `tmux`, `mdadm` and `curl` with CA certificates, and Shulker OS
+inside (a 16 MB drive).
+
+- `shulker linux kernel`: only the kernel, in place (checked, rolled back on a bad write); reboot
+- `shulker linux install`: the whole system onto an empty drive with your files and settings copied over; then put
+  that drive first
+- `shulker disks setup`: the other drives become `/data`: `--raid0` (all the space, default), `--linear`, `--raid1`
+  (mirror) or, on stock Sedna, `--separate` (`/data/1`, `/data/2`, ...)
 
 ## Claude
 
@@ -137,12 +190,17 @@ Every command has a man page: `man <command>`, `man -l` lists them, start with `
 
 | command | what it does |
 | --- | --- |
-| `claude` | chat with Claude, `-p` for one answer, `key`, `config`, `doctor` |
+| `desktop` | full-screen launcher |
+| `swarm` | `init`, `join`, `status`, `top`, `run`, `map`, `jobs`, `drones`, `drone`, `base`, `bench` |
+| `drone` | `status`, `go`, `move`, `turn`, `home`, `dig`, `place`, `scan`, `inspect` (on a drone) |
+| `monitor` | sensors, `add`/`rm` alert rules, `log`, `watch` |
+| `dashboard` | status wall on a projector, `start`/`stop` |
 | `task` | to-do list (todo.txt) and scheduled jobs (`task job`) |
-| `shulker` | `update`, `list`, `install`, `remove`, `doctor`, `version`, `uninstall` |
+| `shulker` | `update`, `list`, `install`, `remove`, `doctor`, `setup`, `linux`, `disks`, `enable/disable claude` |
 | `shulkerfetch` | system info with the logo (also `neofetch`) |
 | `netcfg` | `auto`, `static IP/BITS [GW [DNS]]`, `dhcp`, `wizard` (OC2's setup-network.lua), `off`, `test` |
 | `sshctl` | `on`, `off`, `status`, `key 'ssh-ed25519 ...'` |
+| `claude` | the optional assistant: chat, `-p` for one answer, `key`, `config`, `doctor` |
 | `man` | Shulker OS manual pages; `man oc2` covers OC2's own tools in `/mnt/builtin/bin` |
 
 Apps (`shulker install NAME`): `cowsay` (with `-f shulker`), `fortune`, `matrix`, `snake`, `lsbus`.
