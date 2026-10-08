@@ -1,0 +1,301 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- control: the Shulker Control Center. Every computer and drone of the swarm, the orders they work on
+-- and a command bar to give new ones (see `man control`).
+local U = require("shulker.util")
+local T = require("shulker.tui")
+local S = require("shulker.swarm")
+local O = require("shulker.orders")
+
+if arg[1] == "-h" or arg[1] == "--help" then
+  print("usage: control      the Control Center (on the swarm's main computer, or any member)\nsee `man control`")
+  os.exit(0)
+end
+
+local conf = S.loadConf()
+if not conf.role then
+  U.die("control: this computer is not in a swarm yet. On the main computer run `swarm init` (or `shulker setup`).")
+end
+if conf.role == "main" then conf.leader = "127.0.0.1" end
+
+local function call(msg, timeout)
+  return S.call(conf, msg, timeout or 5)
+end
+
+---------------------------------------------------------------- state
+local status, orders, err = nil, {}, nil
+local selected = 1          -- index into orders
+local message, messageColor = "", "gray"
+local showHelp = false
+
+local function refresh()
+  local st, e = call({ op = "status" })
+  if not st then err = e return end
+  status, err = st, nil
+  local o = call({ op = "orders" })
+  orders = o and o.orders or {}
+  if selected > #orders then selected = math.max(1, #orders) end
+end
+
+local function say(text, color) message, messageColor = text, color or "white" end
+
+---------------------------------------------------------------- drawing helpers
+local function dot(x, y, state)
+  local fg = state == "off" and "pink" or state == "busy" and "gold" or "lime"
+  T.at(x, y, "*", fg)
+end
+
+local function pad(s, w) s = tostring(s or "") if #s > w then return s:sub(1, w) end return s .. string.rep(" ", w - #s) end
+
+local function progress(x, y, w, done, total, color)
+  local f = total > 0 and math.floor(done / total * w + 0.5) or 0
+  T.g(x, y, string.rep("a", f), color or "lime")
+  T.g(x + f, y, string.rep("q", w - f), "gray")
+end
+
+local function jobLabel(id)
+  for _, o in ipairs(orders) do
+    for _, p in ipairs(o.pieces or {}) do
+      if p.id == id then return ("#%d %s"):format(o.id, o.kind or "") end
+    end
+  end
+  return id and ("job " .. id) or nil
+end
+
+---------------------------------------------------------------- panels
+local LW = 27   -- left column width
+
+local function header()
+  T.at(1, 1, string.rep(" ", T.W), nil, "purple")
+  T.at(2, 1, "SHULKER CONTROL", "bright", "purple")
+  local info
+  if status then
+    local on, total, dr = 0, #status.nodes, 0
+    for _, n in ipairs(status.nodes) do
+      if n.online then on = on + 1 end
+      if n.stats and type(n.stats.drone) == "table" then dr = dr + 1 end
+    end
+    info = ("%d/%d online  %d drone%s  jobs %d queued %d running"):format(on, total, dr, dr == 1 and "" or "s",
+      status.queued or 0, status.running or 0)
+  else
+    info = "no connection to the main computer"
+  end
+  T.at(19, 1, info, "lavender", "purple")
+  T.at(T.W - 8, 1, os.date("%H:%M:%S"), "bright", "purple")
+end
+
+local function left(top, h)
+  T.box(1, top, LW, h, "COMPUTERS")
+  local y = top + 1
+  local maxY = top + h - 2
+  if not status then T.at(3, y, "waiting...", "gray") return end
+  local comps, drones = {}, {}
+  for _, n in ipairs(status.nodes) do
+    if n.stats and type(n.stats.drone) == "table" then drones[#drones + 1] = n else comps[#comps + 1] = n end
+  end
+  local nDr = math.min(#drones, 6)
+  local compRows = maxY - y + 1 - (nDr > 0 and nDr + 1 or 0)
+  for i, n in ipairs(comps) do
+    if i > compRows then T.at(3, y - 1, ("... %d more"):format(#comps - compRows + 1), "gray") break end
+    local st = n.stats or {}
+    dot(3, y, not n.online and "off" or n.busy and "busy" or "idle")
+    local what
+    if not n.online then what = "offline"
+    elseif n.busy then what = jobLabel(n.busy) or "busy"
+    else what = ("load %.1f"):format(tonumber(st.load) or 0) end
+    if (tonumber(st.alerts) or 0) > 0 then what = "! " .. st.alerts .. " alert" end
+    T.at(5, y, pad(n.name .. (n.main and "*" or ""), 8), n.online and "bright" or "gray")
+    T.at(14, y, pad(what, LW - 15), (tonumber(st.alerts) or 0) > 0 and "pink" or "gray")
+    y = y + 1
+  end
+  if #comps == 0 then T.at(3, y, "none yet", "gray") y = y + 1 end
+  if nDr > 0 then
+    y = maxY - nDr
+    T.g(1, y, "t" .. string.rep("q", LW - 2) .. "u", "purple")
+    T.at(3, y, " DRONES ", "bright")
+    y = y + 1
+    for i = 1, nDr do
+      local n = drones[i]
+      local d = n.stats.drone
+      local ch = tonumber(d.charge)
+      dot(3, y, not n.online and "off" or n.busy and "busy" or "idle")
+      T.at(5, y, pad(n.name, 8), n.online and "bright" or "gray")
+      T.at(14, y, ch and ("%3d%%"):format(ch) or "  ?%", ch and ch < 20 and "pink" or "aqua")
+      local what = not n.online and "offline" or n.busy and (jobLabel(n.busy) or "busy") or
+        (ch and ch < 25 and "charge" or "idle")
+      T.at(19, y, pad(what, LW - 20), "gray")
+      y = y + 1
+    end
+  end
+end
+
+local function ordersPanel(x, top, w, h)
+  T.box(x, top, w, h, "ORDERS")
+  if #orders == 0 then
+    T.text(x + 2, top + 1, w - 4, "No orders yet. Press : (or click the bar below) and type one, e.g.  mine 100 60 200 115 56 215  or  run on all uptime", "gray")
+    return
+  end
+  local rows = h - 2
+  local first = math.max(1, selected - rows + 1)
+  for i = first, math.min(#orders, first + rows - 1) do
+    local o = orders[i]
+    local y = top + 1 + i - first
+    local k = o.counts or {}
+    local col = o.state == "done" and "lime" or o.state == "failed" and "pink" or "gold"
+    local sel = i == selected
+    T.at(x + 1, y, sel and ">" or " ", "bright")
+    T.at(x + 2, y, pad("#" .. o.id, 4), col)
+    T.at(x + 6, y, pad(o.label, w - 26), sel and "bright" or "white")
+    progress(x + w - 19, y, 10, k.done or 0, o.total or 0, col)
+    T.at(x + w - 8, y, ("%d/%d"):format(k.done or 0, o.total or 0), col)
+  end
+end
+
+local function detailPanel(x, top, w, h)
+  if showHelp then
+    T.box(x, top, w, h, "COMMANDS")
+    for i, l in ipairs(O.HELP) do
+      if i > h - 2 then break end
+      T.at(x + 2, top + i, l:sub(1, w - 4), "white")
+    end
+    return
+  end
+  local o = orders[selected]
+  if not o then
+    T.box(x, top, w, h, "ACTIVITY")
+    for i, l in ipairs(status and status.log or {}) do
+      if i > h - 2 then break end
+      T.at(x + 2, top + i, l:sub(1, w - 4), "gray")
+    end
+    return
+  end
+  T.box(x, top, w, h, ("ORDER #%d"):format(o.id))
+  local k = o.counts or {}
+  T.at(x + 2, top + 1, ("%d queued  %d running  %d done  %d failed"):format(k.queued or 0, k.running or 0,
+    k.done or 0, (k.failed or 0) + (k.lost or 0)), "lavender")
+  local y = top + 2
+  for _, p in ipairs(o.pieces or {}) do
+    if y > top + h - 2 then break end
+    local col = p.state == "done" and "lime" or p.state == "running" and "gold" or
+      (p.state == "failed" or p.state == "lost") and "pink" or "gray"
+    T.at(x + 2, y, pad(p.state, 8), col)
+    T.at(x + 11, y, pad(p.label or "", 16), "white")
+    T.at(x + 28, y, pad(p.node or (p.target == "drone" and "next free drone" or p.target), w - 30), "gray")
+    y = y + 1
+  end
+end
+
+local function footer()
+  local okM, monitor = pcall(require, "shulker.monitor")
+  local mon = okM and monitor.state(30)
+  local line = ""
+  if mon then
+    local e = mon.sensors and mon.sensors.energy
+    line = (e and ("energy %d%%   "):format(e.value) or "")
+    local names = {}
+    for _, al in ipairs(mon.alerts or {}) do names[#names + 1] = al.name end
+    line = line .. (#names > 0 and ("ALERTS: " .. table.concat(names, ", ")) or "no alerts")
+  end
+  if status then line = line .. "   gateway " .. tostring(status.gateway) end
+  T.at(2, T.H - 3, line:sub(1, T.W - 2), mon and #(mon.alerts or {}) > 0 and "pink" or "gray")
+  T.at(1, T.H - 2, pad(" > ", T.W), "gray", "black")
+  T.at(4, T.H - 2, "press : to type a command (help for the list)", "gray", "black")
+  local x = T.button(2, T.H - 1, "Command :", ":")
+  x = T.button(x, T.H - 1, "Stop order s", "s", "danger")
+  x = T.button(x, T.H - 1, "All home h", "h", "quiet")
+  x = T.button(x, T.H - 1, "Help ?", "?", "quiet")
+  T.button(x, T.H - 1, "Quit q", "q", "quiet")
+  T.at(2, T.H, pad(message, T.W - 2), messageColor)
+end
+
+local function draw()
+  T.clear()
+  header()
+  local top, h = 2, T.H - 5
+  left(top, h)
+  local rx, rw = LW + 1, T.W - LW
+  local oh = math.max(5, math.floor(h / 2))
+  ordersPanel(rx, top, rw, oh)
+  detailPanel(rx, top + oh, rw, h - oh)
+  footer()
+  if err then T.at(LW + 3, top + 2, ("cannot reach the main computer: %s"):format(err):sub(1, rw - 4), "pink") end
+  T.flush()
+end
+
+---------------------------------------------------------------- commands
+local function runCommand(line)
+  line = U.trim(line or "")
+  if line == "" then return end
+  local verb = line:match("^(%S+)")
+  if verb == "help" or verb == "?" then showHelp = true say("commands: see the panel; Esc closes it", "gray") return end
+  showHelp = false
+  if verb == "stop" then
+    local id = tonumber(line:match("^stop%s+#?(%d+)") or "")
+    if not id then say("stop ID (the order number)", "pink") return end
+    local r, e = call({ op = "cancel", order = id, stop = true })
+    if r then say(("order #%d: %d piece(s) stopped"):format(id, r.cancelled), "gold") else say(e, "pink") end
+    return
+  end
+  local o, e = O.parse(line, status)
+  if not o then say(e, "pink") return end
+  local r, e2 = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
+  if not r then say(e2, "pink") return end
+  say(("order #%d started: %s%s"):format(r.id, o.label, o.note and (" (" .. o.note .. ")") or ""), "lime")
+  refresh()
+  for i, x in ipairs(orders) do if x.id == r.id then selected = i end end
+end
+
+local function promptCommand()
+  T.clearButtons()
+  T.at(1, T.H - 2, pad(" > ", T.W), "bright", "black")
+  local line = T.input(4, T.H - 2, T.W - 5, "")
+  runCommand(line)
+end
+
+---------------------------------------------------------------- main loop
+T.start()
+local ok, e = pcall(function()
+  refresh()
+  local last = os.time()
+  while true do
+    draw()
+    local ev = T.event(2000)
+    if os.time() - last >= 2 or ev.type ~= "tick" then refresh() last = os.time() end
+    local key = (ev.type == "key" or ev.type == "button") and ev.key or nil
+    if key == "q" or key == "ctrl-c" then break
+    elseif key == ":" or key == "enter" or key == "/" then promptCommand()
+    elseif key == "?" then showHelp = not showHelp
+    elseif key == "esc" then showHelp = false say("")
+    elseif key == "up" or key == "k" then selected = math.max(1, selected - 1)
+    elseif key == "down" or key == "j" then selected = math.min(math.max(1, #orders), selected + 1)
+    elseif key == "s" then
+      local o = orders[selected]
+      if o then runCommand("stop " .. o.id) else say("no order selected", "pink") end
+    elseif key == "h" then runCommand("home all")
+    elseif ev.type == "click" then
+      if ev.y == T.H - 2 then promptCommand()
+      elseif ev.x > LW and ev.y > 2 then
+        -- a click on an order row selects it
+        local rows = math.max(5, math.floor((T.H - 5) / 2)) - 2
+        local first = math.max(1, selected - rows + 1)
+        local i = first + (ev.y - 3)
+        if orders[i] and ev.y <= 2 + rows then selected = i end
+      end
+    elseif ev.type == "eof" then break end
+  end
+end)
+T.stop()
+if not ok then io.stderr:write("control: " .. tostring(e) .. "\n") os.exit(1) end

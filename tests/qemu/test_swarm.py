@@ -97,10 +97,45 @@ def main():
         check(rc == 0 and "Speed-up" in out, "swarm bench", out)
         print("  ..    " + ANSI.sub("", out).strip().splitlines()[-1])
 
+        # orders: split work, progress, stop a running piece, the Control Center draws
+        rc, out = m.run("swarm order map 'sleep 1; echo ok-{}' a b c d e", timeout=60)
+        oid = re.search(r"order (\d+):", out)
+        check(rc == 0 and oid is not None, "swarm order map starts an order", out)
+        done = False
+        for _ in range(30):
+            rc, out = m.run("swarm orders " + oid.group(1))
+            if re.search(r"5/5 done", ANSI.sub("", out)):
+                done = True
+                break
+            time.sleep(2)
+        check(done, "the order's 5 pieces finish on the workers", out)
+        rc, out = m.run("swarm order run on node2 'sleep 120'", timeout=60)
+        sid = re.search(r"order (\d+):", out).group(1)
+        time.sleep(8)
+        m.run("swarm stop " + sid)
+        stopped = False
+        for _ in range(15):
+            rc, out = m.run("swarm orders " + sid)
+            if "failed" in ANSI.sub("", out) and "running" not in ANSI.sub("", out).split("\n", 1)[-1]:
+                stopped = True
+                break
+            time.sleep(2)
+        check(stopped, "swarm stop ends a running piece on its node", out)
+        m.start_cmd("control")
+        try:
+            m.expect("SHULKER CONTROL", timeout=30)
+            m.expect("ORDERS", timeout=10)
+            drew = True
+        except Exception:
+            drew = False
+        m.send("q")
+        rc, out = m.wait_rc(timeout=30)
+        check(drew and rc == 0, "control draws the Control Center and quits with q", out)
+
         # a node that goes away: its queued work goes to the others
         workers[-1].stop()
         rc, out = m.run("swarm map 'sleep 2; echo ok-{}' a b c d", timeout=300)
-        check(rc == 0 and out.count("ok-") == 4, "work still finishes after a node is switched off", out)
+        check(rc == 0 and len(re.findall(r"ok-[a-d]\s*$", out, re.M)) == 4, "work still finishes after a node is switched off", out)
 
         # the main node reboots: the nodes come back by themselves
         m.sh("sync")

@@ -132,6 +132,94 @@ function M.go(x, y, z, dig)
   return false, "too far"
 end
 
+---------------------------------------------------------------- shared coordinates
+-- Each robot counts from where it was placed (its home). To give many drones one area, tell each one
+-- where its home is in world coordinates (F3): `drone origin X Y Z`. Orders then use world coordinates.
+local function confPath() return U.etcdir() .. "/drone.conf" end
+
+function M.origin()
+  for _, l in ipairs(U.lines(confPath())) do
+    local x, y, z = l:match("^origin=(%-?%d+),(%-?%d+),(%-?%d+)")
+    if x then return { x = tonumber(x), y = tonumber(y), z = tonumber(z) } end
+  end
+end
+
+function M.setOrigin(x, y, z)
+  U.mkdir(U.etcdir())
+  U.write(confPath(), ("# where this drone's home (its charger spot) is in the world\norigin=%d,%d,%d\n"):format(x, y, z))
+end
+
+-- world (or, without an origin, home-relative) coordinates -> the robot's own
+function M.toLocal(x, y, z)
+  local o = M.origin()
+  if not o then return x, y, z end
+  return x - o.x, y - o.y, z - o.z
+end
+
+function M.toWorld(p)
+  local o = M.origin()
+  if not o or not p then return p end
+  return { x = p.x + o.x, y = p.y + o.y, z = p.z + o.z }
+end
+
+---------------------------------------------------------------- work: mining a box
+local function charge()
+  local i = M.info()
+  return i and i.charge or 100
+end
+
+-- go home, wait on the charger until `full` percent, come back to where we were
+function M.recharge(full, log)
+  local back = M.position()
+  log("battery low: going home to charge")
+  local ok, err = M.go(0, 0, 0, true)
+  if not ok then return nil, "cannot get home: " .. tostring(err) end
+  local waited = 0
+  while charge() < (full or 90) do
+    os.execute("sleep 5")
+    waited = waited + 5
+    if waited > 1800 then return nil, "not charging at home: is the charger powered and under the robot?" end
+  end
+  log("charged, back to work")
+  if back then
+    local ok2, err2 = M.go(back.x, back.y, back.z, true)
+    if not ok2 then return nil, err2 end
+  end
+  return true
+end
+
+-- dig out every block of the box (two corners, in world or home-relative coordinates), top layer
+-- first, row by row; goes home to charge below `low` percent. Returns blocks visited | nil, why
+function M.mine(x1, y1, z1, x2, y2, z2, opts)
+  opts = opts or {}
+  local log = opts.log or function() end
+  local low = opts.low or 20
+  x1, y1, z1 = M.toLocal(x1, y1, z1)
+  x2, y2, z2 = M.toLocal(x2, y2, z2)
+  if x1 > x2 then x1, x2 = x2, x1 end
+  if y1 > y2 then y1, y2 = y2, y1 end
+  if z1 > z2 then z1, z2 = z2, z1 end
+  local total = (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1)
+  local done = 0
+  for y = y2, y1, -1 do
+    local zs, ze, zd = z1, z2, 1
+    for x = x1, x2 do
+      for z = zs, ze, zd do
+        if charge() < low then
+          local ok, err = M.recharge(opts.full or 90, log)
+          if not ok then return nil, err end
+        end
+        local ok, err = M.go(x, y, z, true)
+        if not ok then return nil, ("stuck at %d %d %d: %s"):format(x, y, z, tostring(err)) end
+        done = done + 1
+        if opts.progress then opts.progress(done, total) end
+      end
+      zs, ze, zd = ze, zs, -zd
+    end
+  end
+  return done
+end
+
 ---------------------------------------------------------------- sensing
 function M.inspect(side)
   local sc = module("scanner")

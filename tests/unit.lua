@@ -346,6 +346,67 @@ test("leader: enrollment, names, heartbeats, jobs, map, requeue", function()
   eq(#status.nodes, 2) eq(status.nodes[1].name, "node1")
 end)
 
+test("orders: words, mine planning, parse", function()
+  local O = require("shulker.orders")
+  local w = O.words([[map 'echo {} done' a "b c"]])
+  eq(#w, 4) eq(w[2], "echo {} done") eq(w[4], "b c")
+  -- 16 x 4 x 16 = 1024 blocks, 3 drones: 4 slices of 4 columns (about 256 blocks each)
+  local pieces, vol = O.planMine({ 0, 60, 0, 15, 57, 15 }, 3)
+  eq(vol, 1024) eq(#pieces, 4)
+  eq(pieces[1].cmd, "drone mine 0 60 0 3 57 15") eq(pieces[4].cmd, "drone mine 12 60 0 15 57 15")
+  eq(pieces[1].target, "drone")
+  -- more drones than blocks along the axis: one slice per column, never empty slices
+  local p2 = O.planMine({ 0, 0, 0, 2, 0, 0 }, 8)
+  eq(#p2, 3)
+  -- uneven: 10 columns over 3 drones -> 4 + 3 + 3
+  local p3 = O.planMine({ 0, 0, 0, 9, 0, 0 }, 3, 1000)
+  eq(p3[1].cmd, "drone mine 0 0 0 3 0 0") eq(p3[3].cmd, "drone mine 7 0 0 9 0 0")
+  local status = { nodes = { { name = "node1", online = true, stats = {} },
+                             { name = "drone1", online = true, stats = { drone = { charge = 80 } } } } }
+  local o = O.parse("home all", status)
+  eq(#o.pieces, 1) eq(o.pieces[1].target, "drone1")
+  eq(#O.parse("run on all uptime", status).pieces, 2)
+  eq(O.parse("map 'echo {}' 1 2 3", status).pieces[3].cmd, "echo '3'")
+  truthy(select(2, O.parse("mine 1 2 3", status)), "mine needs six numbers")
+  truthy(select(2, O.parse("fly", status)), "unknown commands are refused")
+end)
+
+test("leader: orders go to free drones, progress, stop", function()
+  local S = require("shulker.swarm")
+  local L = S.newLeader({ token = "t" })
+  L.enrollUntil = os.time() + 60
+  local function st(mac, drone) return { mac = mac, ip = "10.42.0.9", drone = drone } end
+  L.handle({ op = "join", stats = st("c1") })
+  L.handle({ op = "join", stats = st("d1", { charge = 90 }) })
+  L.handle({ op = "join", stats = st("d2", { charge = 10 }) })
+  local r = L.handle({ op = "order", token = "t", label = "mine", pieces = json.array({
+    { cmd = "drone mine 0 0 0 1 0 0", target = "drone", label = "a" },
+    { cmd = "drone mine 2 0 0 3 0 0", target = "drone", label = "b" } }) })
+  eq(r.id, 1)
+  eq(L.handle({ op = "heartbeat", token = "t", stats = st("c1") }).job, nil, "computers never take drone pieces")
+  eq(L.handle({ op = "heartbeat", token = "t", stats = st("d2", { charge = 10 }) }).job, nil, "a flat drone charges first")
+  local h = L.handle({ op = "heartbeat", token = "t", stats = st("d1", { charge = 90 }) })
+  eq(h.job.cmd, "drone mine 0 0 0 1 0 0")
+  local o = L.handle({ op = "orders", token = "t" }).orders[1]
+  eq(o.total, 2) eq(o.counts.running, 1) eq(o.counts.queued, 1) eq(o.state, "running")
+  -- stop: the queued piece is dropped, the running one is stopped on its drone
+  L.handle({ op = "cancel", token = "t", order = 1, stop = true })
+  local h2 = L.handle({ op = "heartbeat", token = "t", stats = st("d1", { charge = 90 }), running = h.job.id })
+  eq(h2.stop[1], h.job.id)
+  L.handle({ op = "heartbeat", token = "t", stats = st("d1", { charge = 90 }),
+             results = json.array({ { id = h.job.id, rc = 143, out = "stopped" } }) })
+  o = L.handle({ op = "orders", token = "t" }).orders[1]
+  eq(o.state, "failed") eq(o.counts.queued, 0)
+  -- a drone that vanishes mid-piece: the piece goes to another drone
+  local r2 = L.handle({ op = "order", token = "t", label = "m2", pieces = json.array({ { cmd = "x", target = "drone" } }) })
+  local h3 = L.handle({ op = "heartbeat", token = "t", stats = st("d1", { charge = 90 }) })
+  eq(L.job(h3.job.id).order, r2.id)
+  for _, n in pairs(L.nodes) do if n.name == "drone1" then n.seen = os.time() - 100 end end
+  L.reap()
+  eq(L.job(h3.job.id).state, "queued")
+  eq(L.handle({ op = "heartbeat", token = "t", stats = st("d2", { charge = 60 }) }).job.id, h3.job.id)
+end)
+
 os.execute("rm -rf " .. U.q(tmp))
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -20,6 +20,7 @@ COMMANDS
   shulkerfetch   system information with the logo
   netcfg         network setup that survives reboots
   sshctl         turn the SSH server on or off
+  control        the Control Center: every computer, drone and order (`man control`)
   swarm          many computers working as one (`man swarm`)
   drone          robots as drones in the swarm (`man drone`)
   monitor        energy, redstone and machine sensors with alarms (`man monitor`)

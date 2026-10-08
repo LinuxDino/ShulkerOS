@@ -23,11 +23,14 @@ local USAGE = [==[
 usage: drone status [--json]          energy, position, facing, modules
        drone move forward|back|up|down [N] [--dig]
        drone turn left|right|around   drone face north|east|south|west
-       drone go X Y Z [--dig]          to a position relative to the start (x east, y up, z south)
+       drone go X Y Z [--dig]          to a position (world coordinates once `origin` is set,
+                                       else relative to the start: x east, y up, z south)
        drone home [--dig]              back to the start, where its charger should be
        drone dig [front|up|down]      drone place [front|up|down]
        drone inspect [front|up|down]  drone scan        what the scanner module sees
        drone calibrate                 make this spot the new start (0 0 0)
+       drone origin [X Y Z]            where the start (charger spot) is in the world (F3)
+       drone mine X1 Y1 Z1 X2 Y2 Z2   dig out that box, layer by layer; charges itself when low
 see `man drone`]==]
 
 local a = arg
@@ -40,7 +43,7 @@ local r, err = D.robot()
 if not r then U.die("drone: " .. tostring(err)) end
 
 local function report()
-  local p = D.position()
+  local p = D.toWorld(D.position())
   return p and ("at %d %d %d facing %s"):format(p.x, p.y, p.z, tostring(r.facing())) or ""
 end
 
@@ -48,7 +51,9 @@ if cmd == "status" then
   local info = D.info()
   if a[2] == "--json" then print(json.encode(info)) os.exit(0) end
   print(("energy   %s / %s (%s%%)"):format(tostring(info.energy), tostring(info.capacity), tostring(info.charge)))
-  if info.pos then print(("position %d %d %d (relative to the start), facing %s"):format(info.pos.x, info.pos.y, info.pos.z, tostring(info.facing))) end
+  local wp, o = D.toWorld(info.pos), D.origin()
+  if wp then print(("position %d %d %d (%s), facing %s"):format(wp.x, wp.y, wp.z,
+    o and "world" or "relative to the start; set `drone origin` for world coordinates", tostring(info.facing))) end
   print("modules  " .. (#info.modules > 0 and table.concat(info.modules, ", ") or "none"))
 elseif cmd == "move" then
   local map = { forward = "forward", back = "backward", backward = "backward", up = "upward", down = "downward" }
@@ -70,6 +75,7 @@ elseif cmd == "go" or cmd == "home" then
   if cmd == "go" then
     x, y, z = tonumber(a[2] or ""), tonumber(a[3] or ""), tonumber(a[4] or "")
     if not (x and y and z) then U.die("drone: go X Y Z") end
+    x, y, z = D.toLocal(x, y, z)
   end
   local ok, why = D.go(x, y, z, dig)
   if not ok then U.die("drone: " .. tostring(why) .. ", " .. report()) end
@@ -90,6 +96,31 @@ elseif cmd == "scan" then
   local b = res.bands
   print(("7x7x7 around %s: air %d, soft %d, stone %d, hard %d (ores and harder)"):format(report(), b.air, b.soft, b.stone, b.hard))
   if type(res.entities) == "table" and #res.entities > 0 then print("entities: " .. table.concat(res.entities, ", ")) end
+elseif cmd == "origin" then
+  if a[2] then
+    local x, y, z = tonumber(a[2]), tonumber(a[3] or ""), tonumber(a[4] or "")
+    if not (x and y and z) then U.die("drone: origin X Y Z (the world position of its charger spot)") end
+    D.setOrigin(x, y, z)
+    print(("home is %d %d %d in the world; orders and `drone go` use world coordinates now"):format(x, y, z))
+  else
+    local o = D.origin()
+    print(o and ("%d %d %d"):format(o.x, o.y, o.z) or "not set: drone origin X Y Z")
+  end
+elseif cmd == "mine" then
+  local n = {}
+  for i = 2, 7 do n[#n + 1] = tonumber(a[i] or "") end
+  if #n < 6 then U.die("drone: mine X1 Y1 Z1 X2 Y2 Z2") end
+  if not D.module("block_operations") then U.die("drone: mining needs a block operations module") end
+  local last = 0
+  local done, why = D.mine(n[1], n[2], n[3], n[4], n[5], n[6], {
+    log = function(m) print(m) io.flush() end,
+    progress = function(d, t)
+      local pct = math.floor(d / t * 100)
+      if pct >= last + 10 then last = pct - pct % 10 print(("progress %d%% (%d/%d)"):format(pct, d, t)) io.flush() end
+    end,
+  })
+  if not done then U.die("drone: " .. tostring(why) .. ", " .. report()) end
+  print(("done: %d blocks, %s"):format(done, report()))
 elseif cmd == "calibrate" then
   r.calibrate()
   print("this spot is now 0 0 0")

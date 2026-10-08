@@ -31,6 +31,11 @@ usage: swarm init [--work]          make this computer the main node (--work: it
        swarm submit [--on NODE] CMD queue CMD for any free node (or one), print the job number
        swarm map 'CMD {}' ITEM...   one job per ITEM ({} = the item) spread over the nodes
        swarm jobs | result ID | wait ID... | cancel ID|--all
+       swarm order COMMAND          split work over the swarm: mine X1 Y1 Z1 X2 Y2 Z2, home [all],
+                                    go DRONE X Y Z, run [on NAME|all] CMD, map 'CMD {}' ITEM...
+       swarm orders [ID]            orders with progress (ID: every piece and its output)
+       swarm stop ID                stop an order, running pieces too
+       control                      the Control Center: all of this on one screen
        swarm enroll [MINUTES]       accept new nodes for a while (default 30)
        swarm forget NODE            remove a node     swarm bench   measure the speed-up
        swarm log                    what the service did     swarm leave   stop being part of it]==]
@@ -372,6 +377,42 @@ elseif cmd == "result" or cmd == "wait" then
   if #ids == 0 then U.die("usage: swarm " .. cmd .. " ID...") end
   local jobs = cmd == "wait" and waitJobs(ids) or call({ op = "jobs", ids = json.array(ids), full = true }).jobs
   for _, j in ipairs(jobs) do showJob(j, #jobs > 1 or cmd == "result") end
+elseif cmd == "order" then
+  local O = require("shulker.orders")
+  local line = table.concat(a, " ", 2)
+  -- keep the user's quoting: arg[] lost it, so quote words that need it again
+  local parts = {}
+  for i = 2, #a do parts[#parts + 1] = a[i]:match("[%s'\"]") and U.q(a[i]) or a[i] end
+  line = table.concat(parts, " ")
+  local status = call({ op = "status" })
+  local o, err = O.parse(line, status)
+  if not o then U.die("swarm: " .. err) end
+  local r = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
+  print(("order %d: %s, %d piece%s%s"):format(r.id, o.label, #o.pieces, #o.pieces == 1 and "" or "s",
+    o.note and (" (" .. o.note .. ")") or ""))
+  print("follow it with `swarm orders " .. r.id .. "` or in `control`")
+elseif cmd == "orders" then
+  local r = call({ op = "orders", id = tonumber(a[2] or "") })
+  if #r.orders == 0 then print("no orders yet: swarm order ... or control") end
+  for _, o in ipairs(r.orders) do
+    local k = o.counts
+    local fg = o.state == "done" and "ok" or o.state == "failed" and "err" or "accent"
+    print(("%s %-4s %-44s %d/%d done%s%s"):format(c(fg, "*"), "#" .. o.id, o.label:sub(1, 44), k.done, o.total,
+      k.running > 0 and (", " .. k.running .. " running") or "", (k.failed + k.lost) > 0 and c("err", (", %d failed"):format(k.failed + k.lost)) or ""))
+    if a[2] then
+      for _, p in ipairs(o.pieces) do
+        print(("    %-8s %-14s %-9s %s"):format(p.state, p.label or "", p.node or "-", p.rc and ("exit " .. p.rc) or ""))
+        if p.out and p.out ~= "" then
+          local tail = p.out:gsub("%s+$", ""):match("([^\n]*)$")
+          print("             " .. c("dim", tail:sub(1, 60)))
+        end
+      end
+    end
+  end
+elseif cmd == "stop" then
+  if not tonumber(a[2] or "") then U.die("usage: swarm stop ORDER-ID") end
+  local r = call({ op = "cancel", order = tonumber(a[2]), stop = true })
+  print(("order %s: %d piece(s) stopped"):format(a[2], r.cancelled))
 elseif cmd == "cancel" then
   local r = call({ op = "cancel", id = tonumber(a[2] or ""), all = a[2] == "--all" })
   print(("cancelled %d queued job(s)"):format(r.cancelled))

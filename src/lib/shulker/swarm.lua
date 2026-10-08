@@ -73,7 +73,10 @@ function M.droneInfo()
   local ok, D = pcall(require, "shulker.drone")
   if not ok then isRobot = false return nil end
   local info = D.isDrone() and D.info() or nil
-  if not info then isRobot = false end
+  if not info then isRobot = false return nil end
+  -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
+  local o = D.origin()
+  if o and info.pos then info.pos = D.toWorld(info.pos) info.world = true end
   return info
 end
 
@@ -136,10 +139,13 @@ end
 
 ---------------------------------------------------------------- the leader's state
 -- nodes:  [mac] = { name, mac, ip, host, stats, seen (os.time), joined, busy = job id }
--- jobs:   list of { id, cmd, target = "any"|"all"|name, node, state = queued|running|done|failed|lost,
---                   rc, out, created, started, finished, timeout, group }
+-- jobs:   list of { id, cmd, target = "any"|"drone"|name, node, state = queued|running|done|failed|lost,
+--                   rc, out, created, started, finished, timeout, group, order, label, stop }
+--          "any" goes to a computer (never a drone), "drone" to whichever drone is free
+-- orders: list of { id, label, kind, group, created } : a piece of work split into jobs (`swarm order`)
 function M.newLeader(conf)
-  local L = { conf = conf, nodes = {}, jobs = {}, nextJob = 1, enrollUntil = 0, log = {}, mainMac = M.mac() }
+  local L = { conf = conf, nodes = {}, jobs = {}, nextJob = 1, enrollUntil = 0, log = {}, mainMac = M.mac(),
+              orders = {}, nextOrder = 1 }
 
   local statePath = (os.getenv("SHULKER_SWARM_STATE") or "/tmp/swarm-state.json")
   local function save()
@@ -173,28 +179,36 @@ function M.newLeader(conf)
   local function online(n) return os.time() - (n.seen or 0) <= M.DEAD_AFTER end
   L.online = online
 
-  function L.addJob(cmd, target, timeout, group)
+  function L.addJob(cmd, target, timeout, group, order, label)
     local j = { id = L.nextJob, cmd = cmd, target = target or "any", state = "queued", created = os.time(),
-                timeout = math.min(tonumber(timeout) or 600, 3600), group = group }
+                timeout = math.min(tonumber(timeout) or 600, 3600), group = group, order = order, label = label }
     L.nextJob = L.nextJob + 1
     L.jobs[#L.jobs + 1] = j
-    -- keep the last 200 jobs
-    while #L.jobs > 200 do table.remove(L.jobs, 1) end
+    -- keep the last 400 jobs, but never drop unfinished ones
+    local i = 1
+    while #L.jobs > 400 and i <= #L.jobs do
+      if L.jobs[i].state == "queued" or L.jobs[i].state == "running" then i = i + 1 else table.remove(L.jobs, i) end
+    end
     return j
   end
+
+  local function isDrone(n) return n.stats and type(n.stats.drone) == "table" end
+  L.isDrone = isDrone
 
   function L.job(id)
     for _, j in ipairs(L.jobs) do if j.id == tonumber(id) then return j end end
   end
 
-  -- a node asks for work: its own jobs first, then "any" jobs
+  -- a node asks for work: its own jobs first, then the shared ones ("any" for computers, "drone" for drones)
   local function pick(n)
     if n.busy then return nil end
     for _, j in ipairs(L.jobs) do
       if j.state == "queued" and j.target == n.name then return j end
     end
+    local shared = isDrone(n) and "drone" or "any"
+    if isDrone(n) and (tonumber(n.stats.drone.charge) or 100) < 25 then return nil end   -- let it charge first
     for _, j in ipairs(L.jobs) do
-      if j.state == "queued" and j.target == "any" then return j end
+      if j.state == "queued" and j.target == shared then return j end
     end
   end
 
@@ -206,8 +220,9 @@ function M.newLeader(conf)
         for _, x in pairs(L.nodes) do if x.name == j.node then n = x end end
         local overdue = j.started and os.time() - j.started > j.timeout + 60
         if not n or not online(n) or overdue then
-          if j.target == "any" and not j.retried then
-            j.state, j.node, j.retried = "queued", nil, true
+          local tries = j.retried == true and 1 or (tonumber(j.retried) or 0)
+          if (j.target == "any" or j.target == "drone") and not j.stop and tries < (j.target == "drone" and 3 or 1) then
+            j.state, j.node, j.retried = "queued", nil, tries + 1
             L.note(("job %d requeued (%s went away)"):format(j.id, tostring(n and n.name)))
           else
             j.state = "lost"
@@ -261,6 +276,14 @@ function M.newLeader(conf)
     end
     if msg.running then n.busy = tonumber(msg.running) else n.busy = nil end
     local reply = { ok = true, name = n.name }
+    -- running jobs someone stopped (swarm stop): the node kills them and reports the result
+    for _, x in ipairs(L.jobs) do
+      if x.state == "running" and x.node == n.name and x.stop then
+        reply.stop = reply.stop or {}
+        reply.stop[#reply.stop + 1] = x.id
+      end
+    end
+    if reply.stop then reply.stop = json.array(reply.stop) end
     local j = pick(n)
     if j then
       j.state, j.node, j.started = "running", n.name, os.time()
@@ -320,6 +343,7 @@ function M.newLeader(conf)
       end
       if want then
         out[#out + 1] = { id = j.id, cmd = j.cmd, target = j.target, node = j.node, state = j.state,
+                          order = j.order, label = j.label,
                           rc = j.rc, out = msg.full and j.out or nil, created = j.created, started = j.started,
                           finished = j.finished }
       end
@@ -346,12 +370,62 @@ function M.newLeader(conf)
     return { error = "no node " .. tostring(msg.name) }
   end
 
+  -- cancel: { id } one job, { order } every piece of an order, { all = true } everything;
+  -- queued pieces are dropped, running ones are stopped on their node (stop = true)
   function H.cancel(msg)
     local n = 0
     for _, j in ipairs(L.jobs) do
-      if j.state == "queued" and (msg.all or j.id == tonumber(msg.id)) then j.state = "failed" j.out = "cancelled" n = n + 1 end
+      local hit = msg.all or j.id == tonumber(msg.id) or (msg.order and j.order == tonumber(msg.order))
+      if hit and j.state == "queued" then
+        j.state, j.out, j.finished = "failed", "cancelled", os.time()
+        n = n + 1
+      elseif hit and j.state == "running" and (msg.stop or msg.order) then
+        j.stop = true
+        n = n + 1
+      end
     end
     return { ok = true, cancelled = n }
+  end
+
+  -- order: { label, kind, pieces = { { cmd, target, label, timeout } } } -> one job per piece
+  function H.order(msg)
+    if type(msg.pieces) ~= "table" or #msg.pieces == 0 then return { error = "an order needs pieces" } end
+    local o = { id = L.nextOrder, label = tostring(msg.label or "order"), kind = tostring(msg.kind or "run"),
+                created = os.time() }
+    L.nextOrder = L.nextOrder + 1
+    o.group = "order-" .. o.id
+    for _, p in ipairs(msg.pieces) do
+      L.addJob(tostring(p.cmd), p.target or "any", p.timeout or msg.timeout, o.group, o.id, p.label)
+    end
+    L.orders[#L.orders + 1] = o
+    while #L.orders > 30 do table.remove(L.orders, 1) end
+    L.note(("order %d: %s (%d pieces)"):format(o.id, o.label, #msg.pieces))
+    return { ok = true, id = o.id }
+  end
+
+  -- orders with progress: counts per state and the pieces (who does what)
+  function H.orders(msg)
+    local out = {}
+    for i = #L.orders, 1, -1 do
+      local o = L.orders[i]
+      if not msg.id or tonumber(msg.id) == o.id then
+        local counts, pieces = { queued = 0, running = 0, done = 0, failed = 0, lost = 0 }, {}
+        for _, j in ipairs(L.jobs) do
+          if j.order == o.id then
+            counts[j.state] = (counts[j.state] or 0) + 1
+            pieces[#pieces + 1] = { id = j.id, label = j.label, target = j.target, node = j.node, state = j.state,
+                                    rc = j.rc, started = j.started, finished = j.finished,
+                                    out = msg.id and j.out or nil }
+          end
+        end
+        local total = #pieces
+        local state = counts.queued + counts.running > 0 and "running" or
+          ((counts.failed + counts.lost > 0) and "failed" or "done")
+        out[#out + 1] = { id = o.id, label = o.label, kind = o.kind, created = o.created, total = total,
+                          counts = counts, state = state, pieces = json.array(pieces) }
+      end
+    end
+    return { ok = true, orders = json.array(out) }
   end
 
   -- handle one request (already decoded); joins use the enrollment window instead of the token

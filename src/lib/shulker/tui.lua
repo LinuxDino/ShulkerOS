@@ -209,6 +209,9 @@ function M.event(timeout)
   return ev
 end
 
+-- forget the buttons drawn so far (before a text field: typed letters must not trigger them)
+function M.clearButtons() buttons = {} end
+
 -- a one-line text field; returns the text, or nil on Esc
 function M.input(x, y, w, default, hidden)
   local s = default or ""

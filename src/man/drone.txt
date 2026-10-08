@@ -45,3 +45,10 @@ SAFETY
   Below 15% energy a drone stops waiting and drives home (to its charger) by
   itself, digging if needed; it does that again only after charging above 50%.
   `go` without --dig never breaks blocks: it reports where it got stuck.
+
+WORK
+  drone origin X Y Z           where its charger spot is in the world (F3);
+                               go and mine then use world coordinates
+  drone mine X1 Y1 Z1 X2 Y2 Z2 dig out the box layer by layer, top first;
+                               goes home to charge below 20 % and returns
+  Usually given as orders from the main computer: see `man control`.

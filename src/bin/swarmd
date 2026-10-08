@@ -179,8 +179,11 @@ local function startJob(job)
   local t = math.max(1, math.floor(tonumber(job.timeout) or 600))
   -- in the background, so the heartbeats go on while the job runs
   -- jobs start in /data when the node has one (more room than the system drive), else in /root
-  os.execute((JOB_ENV .. "(if grep -q ' /data ' /proc/mounts; then cd /data; else cd /root; fi 2>/dev/null; timeout %d sh %s/cmd.sh > %s/out 2>&1 < /dev/null; echo $? > %s/rc.tmp; mv %s/rc.tmp %s/rc) &")
-    :format(t, dir, dir, dir, dir, dir))
+  -- the job runs in its own process group (setsid), so `swarm stop` can end it with everything it started
+  os.execute((JOB_ENV .. "(if grep -q ' /data ' /proc/mounts; then cd /data; else cd /root; fi 2>/dev/null; " ..
+    "setsid sh -c 'echo $$ > %s/pgid; exec timeout %d sh %s/cmd.sh' > %s/out 2>&1 < /dev/null; " ..
+    "echo $? > %s/rc.tmp; mv %s/rc.tmp %s/rc) &")
+    :format(dir, t, dir, dir, dir, dir, dir))
   running = { id = job.id, dir = dir }
   log("job", job.id, "started")
 end
@@ -232,6 +235,14 @@ while true do
     if reply then
       results = {}
       setName(reply.name)
+      for _, id in ipairs(reply.stop or {}) do
+        if running and tonumber(id) == tonumber(running.id) then
+          local pg = U.trim(U.read(running.dir .. "/pgid") or "")
+          if pg:match("^%d+$") then os.execute("kill -TERM -" .. pg .. " 2>/dev/null") end
+          U.append(running.dir .. "/out", "\n[stopped from the main node]\n")
+          log("job", running.id, "stopped")
+        end
+      end
       if reply.job and not running then startJob(reply.job) end
     elseif err and (err:find("join first") or err:find("wrong swarm token")) then
       joined = false

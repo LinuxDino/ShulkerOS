@@ -1,0 +1,50 @@
+control - the Shulker Control Center
+
+SYNOPSIS
+  control
+
+DESCRIPTION
+  One screen for the whole swarm, with the mouse or the keys shown on the
+  buttons:
+    COMPUTERS  every computer: green idle, yellow working (on which order),
+               red offline, with load and alerts
+    DRONES     battery and what each drone is doing
+    ORDERS     everything you started, with a progress bar
+    ORDER #N   the pieces of the selected order: who works on which part
+  The bottom line shows energy, alerts and the internet gateway.
+
+  Press : (or click the command bar) and type an order. It is split into
+  pieces and the swarm works on them at the same time:
+
+    mine X1 Y1 Z1 X2 Y2 Z2    dig out a box. Cut into slices of about 256
+                              blocks, at least one per drone; every free
+                              drone takes the next slice. A drone goes home
+                              to charge below 20 % and comes back. If a
+                              drone goes missing, another one takes over
+                              its slice.
+    home [all|DRONE...]       drones back to their chargers (key h: all)
+    go DRONE X Y Z            one drone somewhere
+    run [on NAME|all] CMD     a shell command on one, every or any free
+                              computer
+    map 'CMD {}' ITEM...      one piece per item on the free computers
+    stop ID                   stop an order (key s: the selected one);
+                              running pieces are stopped too
+    help                      this list (key ?)
+
+  Up and down (or a click) select an order; q quits.
+
+COORDINATES
+  Each robot counts from its charger spot. For shared areas tell every
+  drone once where that spot is in the world (F3 screen):
+      swarm drone drone1 origin 120 64 -35
+  From then on mine and go use world coordinates for that drone.
+
+  Drones never take computer work and computers never take drone work;
+  a drone under 25 % gets no new piece until it has charged.
+
+THE SAME FROM THE SHELL
+  swarm order mine 100 60 200 115 57 215
+  swarm orders [ID]      swarm stop ID
+
+SEE ALSO
+  swarm, drone, dashboard, desktop

@@ -95,6 +95,23 @@ drone's tunnel module (`swarm base`). `drone status`, `drone go X Y Z`, `drone s
 `swarm drones` and `swarm drone NAME CMD`. Below 15 % battery a drone goes home to its charger. See `man swarm`,
 `man drone`.
 
+## Control Center
+
+`control` shows the whole swarm on one screen: every computer and drone, the orders they work on with progress
+bars, and a command bar. Orders are split into pieces the swarm works on at the same time:
+
+```
+mine 100 60 200 115 57 215     dig a box: one slice per free drone, drones charge themselves and come back
+home all                       drones back to their chargers
+run on all shulker update      a command on every computer
+map 'sha256sum {}' a b c d     one piece per item on the free computers
+stop 3                         stop order 3, running pieces too
+```
+
+Computers never take drone work and drones never take computer work; a lost piece goes to another drone. Tell
+each drone once where its charger is in the world (`swarm drone drone1 origin X Y Z`) and orders use world
+coordinates. The same from the shell: `swarm order ...`, `swarm orders`, `swarm stop ID`. See `man control`.
+
 ## Monitor, alarms and the projector
 
 `monitor` shows the sensors on the bus: energy (`energy`, `energy.1`, ...), `redstone.SIDE`, `comparator`,
@@ -199,6 +216,7 @@ Every command has a man page: `man <command>`, `man -l` lists them, start with `
 | command | what it does |
 | --- | --- |
 | `desktop` | full-screen launcher |
+| `control` | Control Center: computers, drones, orders, command bar |
 | `swarm` | `init`, `join`, `status`, `top`, `run`, `map`, `jobs`, `drones`, `drone`, `base`, `bench` |
 | `drone` | `status`, `go`, `move`, `turn`, `home`, `dig`, `place`, `scan`, `inspect` (on a drone) |
 | `monitor` | sensors, `add`/`rm` alert rules, `log`, `watch` |

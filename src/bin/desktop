@@ -27,6 +27,7 @@ local claudeOn = not setup:match("claude=off")
 
 local APPS = {
   { id = "home", label = "Home", key = "h" },
+  { id = "control", label = "Control", key = "k" },
   { id = "tasks", label = "Tasks", key = "t" },
   { id = "swarm", label = "Swarm", key = "w" },
   { id = "drones", label = "Drones", key = "d" },
@@ -295,6 +296,7 @@ local ok, err = pcall(function()
     if ev.type == "key" and (ev.key == "q" or ev.key == "ctrl-c") then return end
     if target == "shell" then return end
     if target == "claude" then runOutside(U.q(U.home() .. "/bin/claude"))
+    elseif target == "control" then runOutside(U.q(U.home() .. "/bin/control"))
     elseif target then current = target
     elseif current == "files" and (ev.type == "key" or ev.type == "button" or ev.type == "click") then
       local list = filesList
