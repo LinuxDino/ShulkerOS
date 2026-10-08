@@ -8,6 +8,7 @@ SYNOPSIS
   shulker doctor
   shulker linux [status | kernel | install [DEV]]
   shulker disks [status | setup [--raid0|--linear|--raid1|--separate] | mount]
+  shulker mkdisk [node|plain] [--all | /dev/vdX ...] [--yes]
   shulker slim [--yes]
   shulker setup
   shulker enable|disable claude
@@ -51,6 +52,19 @@ DESCRIPTION
              setup erases the free drives. /data is mounted at every boot
              from /etc/shulker/disks.conf. The system drive is never used:
              with 4 bays you get the system plus 3 drives of /data.
+  mkdisk     the disk maker: turns blank hard drives in this computer's
+             other bays into ready Shulker drives. It downloads the slim
+             system once (Sedna without MicroPython and tcc, with the RAID
+             kernel and mdadm: about 1.2 MB stays free on an 8 MB drive),
+             copies it to the other blank drives, and puts this computer's
+             own Shulker OS on each, so run `shulker update` first.
+               node   (default) joins the swarm main at 10.42.0.1 by itself,
+                      and at its first start turns the other drives of its
+                      computer into /data (RAID 0), erasing them; jobs run
+                      in /data
+               plain  the setup wizard runs at the first login
+             Then shut down, take the drives out, put each one in the first
+             bay of a computer. Empty floppy/flash drives are never used.
   slim       removes MicroPython and the tcc C compiler from stock Sedna
              (about 650 KB), which Shulker OS and the swarm never use. Do it
              on 8 MB drives before `shulker install mdadm`.

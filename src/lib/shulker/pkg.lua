@@ -155,10 +155,18 @@ function M.update(opts)
   if not files then return nil, meta end
   if #files == 0 then return nil, "the manifest lists no files" end
   local home = U.home()
-  local changed, need = {}, 0
+  -- replaced files reuse their space: count the growth, plus room for the biggest file's temporary copy
+  local changed, need, biggest = {}, 0, 0
   for _, f in ipairs(files) do
-    if M.sha256(home .. "/" .. f.path) ~= f.sha then changed[#changed + 1] = f need = need + f.size end
+    local path = home .. "/" .. f.path
+    if M.sha256(path) ~= f.sha then
+      changed[#changed + 1] = f
+      local old = U.exists(path) and tonumber((U.capture("wc -c < " .. U.q(path))):match("%d+")) or 0
+      need = need + math.max(0, f.size - old)
+      biggest = math.max(biggest, f.size)
+    end
   end
+  need = need + biggest
   local info = { current = U.trim(U.read(home .. "/VERSION") or "?"), latest = meta.version or "?", changed = #changed }
   if opts.check or #changed == 0 then return info end
   local free = M.freeKB(home)

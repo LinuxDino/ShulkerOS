@@ -178,7 +178,8 @@ local function startJob(job)
   U.write(dir .. "/cmd.sh", tostring(job.cmd) .. "\n")
   local t = math.max(1, math.floor(tonumber(job.timeout) or 600))
   -- in the background, so the heartbeats go on while the job runs
-  os.execute((JOB_ENV .. "(cd /root 2>/dev/null; timeout %d sh %s/cmd.sh > %s/out 2>&1 < /dev/null; echo $? > %s/rc.tmp; mv %s/rc.tmp %s/rc) &")
+  -- jobs start in /data when the node has one (more room than the system drive), else in /root
+  os.execute((JOB_ENV .. "(if grep -q ' /data ' /proc/mounts; then cd /data; else cd /root; fi 2>/dev/null; timeout %d sh %s/cmd.sh > %s/out 2>&1 < /dev/null; echo $? > %s/rc.tmp; mv %s/rc.tmp %s/rc) &")
     :format(t, dir, dir, dir, dir, dir))
   running = { id = job.id, dir = dir }
   log("job", job.id, "started")

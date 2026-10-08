@@ -85,6 +85,11 @@ pack means following those licenses.
 3. `swarm status`, `swarm top` (live topology and traffic), `swarm run --on all uptime`, `swarm map 'echo {}' 1 2 3`,
    `swarm bench`. Hubs pass 32 frames a tick and every computer runs on its own thread, so 10 or 18 workers are fine.
 
+**Making node drives**: one extra computer on the main's network, with Shulker OS and 3 blank drives in its other
+bays, runs `shulker mkdisk`: it writes ready **Shulker Node** drives (slim Sedna with the RAID kernel and mdadm, about
+1.2 MB free, Shulker OS set up as a worker). Put one in the first bay of each node: it joins the main and turns the
+node's other drives into a RAID `/data` at its first start; swarm jobs run in `/data`.
+
 Drones (robots with a **"Shulker Drone"** drive) talk to a **drone base**: a worker with a tunnel card linked to the
 drone's tunnel module (`swarm base`). `drone status`, `drone go X Y Z`, `drone scan`; from the main computer
 `swarm drones` and `swarm drone NAME CMD`. Below 15 % battery a drone goes home to its charger. See `man swarm`,

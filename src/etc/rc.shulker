@@ -26,6 +26,12 @@ start() {
 		printf 'Starting crond (Shulker jobs): '
 		crond -b -c "$ETC/crontabs" -L /tmp/crond.log && echo OK || echo FAIL
 	fi
+	# a Shulker Node drive (shulker mkdisk): at its first start the other drives become /data
+	if [ -f "$ETC/autodisks" ] && [ ! -f "$ETC/disks.conf" ]; then
+		echo "First start of a Shulker Node drive: setting up the other drives as /data"
+		SHULKER_HOME="$SHULKER_HOME" "$SHULKER_HOME/bin/shulker" disks setup --yes
+		rm -f "$ETC/autodisks"
+	fi
 	# extra drives as /data (shulker disks setup)
 	if [ -f "$ETC/disks.conf" ]; then
 		printf 'Mounting /data: '

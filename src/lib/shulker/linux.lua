@@ -173,6 +173,76 @@ function M.installTo(dev, log)
   return true
 end
 
+---------------------------------------------------------------- making node drives (the disk maker)
+-- `shulker mkdisk`: write the slim system (stock Sedna without MicroPython and tcc, with the RAID kernel
+-- and mdadm) onto blank drives, then this computer's own Shulker OS on top, set up as KIND:
+--   node   joins the swarm main at 10.42.0.1 by itself and turns its other drives into /data
+--   plain  the setup wizard runs at the first login (for a main or a personal computer)
+M.SLIM_KB = 8192
+
+local function verifyImage(dev, kb, want)
+  local got = U.capture(("dd if=%s bs=1024 count=%d 2>/dev/null | sha256sum"):format(dev, kb)):match("^(%x+)")
+  return got == want, got
+end
+
+local function installShulker(mnt, kind)
+  local home = U.home()
+  local function sh(cmd) local out, code = U.capture(cmd) if code ~= 0 then error(U.trim(out), 0) end end
+  sh(("mkdir -p %s/opt/shulker %s/etc/shulker/crontabs %s/etc/profile.d %s/etc/init.d")
+    :format(mnt, mnt, mnt, mnt))
+  sh(("cp -a %s/. %s/opt/shulker/"):format(U.q(home), mnt))
+  sh(("cp %s/etc/profile.sh %s/etc/profile.d/shulker.sh"):format(U.q(home), mnt))
+  sh(("cp %s/etc/rc.shulker %s/etc/init.d/S95shulker && chmod 755 %s/etc/init.d/S95shulker"):format(U.q(home), mnt, mnt))
+  sh(("cp %s/share/issue %s/etc/issue && cp %s/share/motd %s/etc/motd"):format(U.q(home), mnt, U.q(home), mnt))
+  U.write(mnt .. "/etc/shulker/repo.conf", ("repo=%s\nbranch=main\n"):format(pkg.DEFAULT_REPO))
+  if kind == "node" then
+    U.write(mnt .. "/etc/shulker/swarm.conf", "# Shulker Swarm (see `man swarm`)\nleader=10.42.0.1\nport=4242\nrole=worker\n")
+    sh("chmod 600 " .. mnt .. "/etc/shulker/swarm.conf")
+    U.write(mnt .. "/etc/shulker/setup.conf", "# a Shulker Node drive (shulker mkdisk): no setup wizard\nrole=worker\nclaude=off\n")
+    U.write(mnt .. "/etc/network/interfaces", "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n")
+    -- first start: the computer's other drives become one /data (rc.shulker, `shulker disks setup --yes`)
+    U.write(mnt .. "/etc/shulker/autodisks", "made by shulker mkdisk " .. os.date("%Y-%m-%d") .. "\n")
+  end
+end
+
+-- devs: list of drive entries from M.spare(); returns the number written
+function M.makeDisks(devs, kind, log)
+  local s, err = sums()
+  if not s then return nil, err end
+  local want = s["sedna-slim.img"]
+  if not want then return nil, "the repository has no sedna-slim.img yet" end
+  for _, d in ipairs(devs) do
+    if d.kb < M.SLIM_KB then return nil, ("%s is %d KB: a node drive needs 8 MB"):format(d.dev, d.kb) end
+  end
+  -- the first drive from the internet, the others copied from it (much faster than downloading again)
+  local first = devs[1].dev
+  log(("downloading the slim system and writing it to %s"):format(first))
+  local get = pkg.verifiedTLS() and "curl -fsSL --max-time 600 %s" or "wget -q -T 60 -O - %s"
+  local out, code = U.capture(("set -o pipefail 2>/dev/null; " .. get .. " | gunzip -c | dd of=%s bs=64k 2>&1")
+    :format(U.q(M.base() .. "/sedna-slim.img.gz"), first))
+  if code ~= 0 then return nil, "writing failed: " .. U.trim(out:gsub("wget: note: TLS certificate validation not implemented\n?", "")) end
+  U.capture("sync")
+  local ok, got = verifyImage(first, M.SLIM_KB, want)
+  if not ok then return nil, ("%s does not match SHA256SUMS (got %s): try again"):format(first, tostring(got):sub(1, 12)) end
+  for i = 2, #devs do
+    log(("copying it to %s"):format(devs[i].dev))
+    local o, c = U.capture(("dd if=%s of=%s bs=64k count=128 2>&1 && sync"):format(first, devs[i].dev))
+    if c ~= 0 then return nil, U.trim(o) end
+    if not verifyImage(devs[i].dev, M.SLIM_KB, want) then return nil, devs[i].dev .. ": the copy does not match" end
+  end
+  local mnt = "/tmp/shulker-mkdisk"
+  U.mkdir(mnt)
+  for _, d in ipairs(devs) do
+    log(("installing Shulker OS %s on %s (%s)"):format(U.trim(U.read(U.home() .. "/VERSION") or ""), d.dev, kind))
+    local o, c = U.capture(("mount -t ext2 %s %s"):format(d.dev, mnt))
+    if c ~= 0 then return nil, "cannot mount " .. d.dev .. ": " .. U.trim(o) end
+    local okI, ierr = pcall(installShulker, mnt, kind)
+    U.capture("sync; umount " .. mnt)
+    if not okI then return nil, d.dev .. ": " .. tostring(ierr) end
+  end
+  return #devs
+end
+
 ---------------------------------------------------------------- extra drives (/data)
 M.DISKS_CONF = "/etc/shulker/disks.conf"
 
