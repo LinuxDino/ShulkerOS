@@ -7,6 +7,8 @@
 set -e
 cd "$(dirname "$0")/.."
 version=$(cat src/VERSION)
+# the swarm main node serves the installer to its workers: keep its copy current
+cp install.sh src/share/install.sh
 
 {
 	echo "version $version"

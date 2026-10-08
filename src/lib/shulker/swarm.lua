@@ -393,6 +393,79 @@ function M.stopServices()
   if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
 end
 
+---------------------------------------------------------------- network install (the main node serves Shulker OS)
+-- GET /join            a script for a stock Sedna computer: install Shulker OS from this node and join
+-- GET /swarm/install.sh, /swarm/manifest.txt, /swarm/src/<path>   what the normal installer expects
+M.HTTP_PORT = 80
+
+-- manifest of the running install, built once (works for /opt/shulker and the data pack alike)
+local manifestCache
+function M.manifest()
+  if manifestCache then return manifestCache end
+  local home = U.home()
+  local list = U.capture("cd " .. U.q(home) .. " && find . -type f ! -name manifest.txt ! -name '*.tmp' | sed 's|^./||' | LC_ALL=C sort")
+  local lines = { "version " .. U.trim(U.read(home .. "/VERSION") or U.VERSION) }
+  for path in list:gmatch("[^\n]+") do
+    local sum = (U.capture("sha256sum " .. U.q(home .. "/" .. path))):match("^(%x+)")
+    local data = U.read(home .. "/" .. path)
+    if sum and data then lines[#lines + 1] = sum .. " " .. #data .. " " .. path end
+  end
+  manifestCache = table.concat(lines, "\n") .. "\n"
+  return manifestCache
+end
+
+function M.joinScript(leaderIp)
+  return table.concat({
+    "#!/bin/sh",
+    "# Shulker Swarm network install, served by the main node " .. leaderIp,
+    "set -e",
+    "echo ':: installing Shulker OS from the swarm main node " .. leaderIp .. "'",
+    "wget -qO- http://" .. leaderIp .. "/swarm/install.sh | SHULKER_REPO=http://" .. leaderIp .. " SHULKER_BRANCH=swarm sh",
+    "mkdir -p /etc/shulker",
+    "printf 'leader=" .. leaderIp .. "\\nport=" .. M.PORT .. "\\nrole=worker\\n' > /etc/shulker/swarm.conf",
+    "chmod 600 /etc/shulker/swarm.conf",
+    "[ -f /etc/shulker/setup.conf ] || printf 'role=worker\\nclaude=off\\n' > /etc/shulker/setup.conf",
+    "/opt/shulker/bin/netcfg dhcp >/dev/null 2>&1 || true",
+    "/opt/shulker/bin/swarm services",
+    "echo ':: joined. This computer shows up in `swarm status` on the main node in a few seconds.'",
+  }, "\n") .. "\n"
+end
+
+-- answer one HTTP request on an accepted connection
+function M.serveHttp(c, leaderIp)
+  c:settimeout(3)
+  local request = c:receive("*l") or ""
+  repeat local h = c:receive("*l") until not h or h == ""
+  local path = request:match("^GET%s+(%S+)") or ""
+  path = path:gsub("%?.*$", "")
+  local body, ctype = nil, "text/plain"
+  if path == "/join" then
+    body = M.joinScript(leaderIp)
+  elseif path == "/swarm/install.sh" then
+    for _, candidate in ipairs({ U.home() .. "/share/install.sh" }) do body = U.read(candidate) if body then break end end
+  elseif path == "/swarm/manifest.txt" then
+    body = M.manifest()
+  elseif path:match("^/swarm/src/") then
+    local rel = path:sub(#"/swarm/src/" + 1)
+    if not rel:find("%.%.") and M.manifest():find(" " .. rel:gsub("%p", "%%%0") .. "\n", 1) then
+      body = U.read(U.home() .. "/" .. rel)
+      ctype = "application/octet-stream"
+    end
+  end
+  if body then
+    c:send("HTTP/1.0 200 OK\r\nContent-Type: " .. ctype .. "\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n")
+    local i = 1
+    while i <= #body do
+      local n = c:send(body, i, math.min(#body, i + 8191))
+      if not n then break end
+      i = n + 1
+    end
+  else
+    c:send("HTTP/1.0 404 Not Found\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n")
+  end
+  c:close()
+end
+
 ---------------------------------------------------------------- formatting
 function M.age(seconds)
   seconds = tonumber(seconds) or 0

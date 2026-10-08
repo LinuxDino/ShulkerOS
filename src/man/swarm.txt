@@ -33,6 +33,12 @@ BUILDING ONE (10 workers + 1 main)
      after `swarm init`; `swarm enroll` opens the window again.
   3. swarm status  shows every node with load, memory, disk and uptime.
 
+  Workers without the Swarm Node drive (plain Sedna, no internet needed): log
+  in as root and type
+      udhcpc -i eth0 && wget -qO- http://10.42.0.1/join | sh
+  The main computer serves Shulker OS itself (HTTP, port 80): the worker
+  installs it from there and joins. Its `shulker update` then also fetches
+  from the main computer, so updating the main computer updates the swarm.
   A computer that already runs Shulker OS becomes a worker with `swarm join`.
   Workers powered on before the main computer keep trying until it is there.
 

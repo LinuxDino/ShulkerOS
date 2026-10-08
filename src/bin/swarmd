@@ -46,10 +46,18 @@ if mode == "leader" then
   if not server then log("cannot listen on port", conf.port, err) os.exit(1) end
   server:settimeout(0)
   log("leader listening on port", conf.port)
+  -- plain HTTP for the network install of workers (`wget -qO- http://10.42.0.1/join | sh`)
+  local web = socket.bind("*", S.HTTP_PORT)
+  if web then web:settimeout(0) log("serving the network install on port", S.HTTP_PORT)
+  else log("cannot serve the network install on port", S.HTTP_PORT) end
   local lastReap, lastGw = 0, 0
   while true do
-    local ready = socket.select({ server }, nil, 1)
-    if ready and #ready > 0 then
+    local ready = socket.select(web and { server, web } or { server }, nil, 1)
+    if web and ready and ready[web] then
+      local wc = web:accept()
+      if wc then pcall(S.serveHttp, wc, S.ip() or conf.leader) end
+    end
+    if ready and ready[server] then
       local c = server:accept()
       if c then
         c:settimeout(3)
