@@ -84,7 +84,10 @@ end
 function M.spare()
   local s = {}
   for _, d in ipairs(M.drives()) do
-    if d.name:match("^vd") and not d.root and d.name ~= "vda" and not d.mount and not d.md then s[#s + 1] = d end
+    -- an empty disk drive (floppy slot) shows up as a 0 KB drive: skip anything under 1 MB
+    if d.name:match("^vd") and not d.root and d.name ~= "vda" and not d.mount and not d.md and d.kb >= 1024 then
+      s[#s + 1] = d
+    end
   end
   return s
 end

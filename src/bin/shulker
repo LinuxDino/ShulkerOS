@@ -67,7 +67,8 @@ elseif cmd == "linux" or cmd == "disks" then
   end
   local function showDrives()
     for _, d in ipairs(L.drives()) do
-      local what = d.root and "system (boot)" or d.md and ("in " .. d.md) or d.mount and ("mounted at " .. d.mount) or "free"
+      local what = d.root and "system (boot)" or d.md and ("in " .. d.md) or d.mount and ("mounted at " .. d.mount)
+        or d.kb < 1024 and "empty (disk drive without a floppy?), not used" or "free"
       print(("  %-9s %7.1f MB  %s"):format(d.dev, d.kb / 1024, what))
     end
   end
