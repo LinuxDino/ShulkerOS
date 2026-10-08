@@ -15,7 +15,8 @@ cd "$BR"
 make BR2_EXTERNAL="$ROOT/linux" sedna-riscv64_defconfig >/dev/null
 support/kconfig/merge_config.sh -m .config "$ROOT/linux/buildroot.fragment" >/dev/null
 make BR2_EXTERNAL="$ROOT/linux" olddefconfig >/dev/null
-FORCE_UNSAFE_CONFIGURE=1 make BR2_EXTERNAL="$ROOT/linux" -j"$(nproc)"
+# git:// (repo.or.cz) is often blocked: fetch tinycc over HTTPS from its GitHub mirror
+FORCE_UNSAFE_CONFIGURE=1 make BR2_EXTERNAL="$ROOT/linux" TINYCC_SITE=https://github.com/TinyCC/tinycc.git -j"$(nproc)"
 OUT="$ROOT/linux/dist"
 mkdir -p "$OUT"
 debugfs -R "dump /boot/Image $OUT/Image" output/images/rootfs.ext2 2>/dev/null
