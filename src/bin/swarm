@@ -270,6 +270,8 @@ elseif cmd == "top" or cmd == "topology" then
         if n.online then
           T.at(50, y, "rx " .. rate(n.rx_rate) .. " tx " .. rate(n.tx_rate), "lavender")
           T.at(71, y, ("ld %.1f"):format(st.load or 0), "gray")
+          if (tonumber(st.alerts) or 0) > 0 then T.at(79, y, ("! %d alert%s"):format(st.alerts, st.alerts == 1 and "" or "s"), "pink")
+          elseif st.energy then T.at(79, y, ("E %d%%"):format(st.energy), st.energy < 20 and "pink" or "gray") end
         else
           T.at(50, y, "last seen " .. S.age(n.seen) .. " ago", "gray")
         end

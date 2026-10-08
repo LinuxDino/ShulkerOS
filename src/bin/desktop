@@ -109,6 +109,15 @@ function P.home()
   local open = 0
   for _, t in ipairs(tasks.load()) do if not t.blank and not t.done then open = open + 1 end end
   rows[#rows + 1] = { "Tasks", open .. " open" }
+  local okM, monitor = pcall(require, "shulker.monitor")
+  local mon = okM and monitor.state(20)
+  if mon then
+    local e = mon.sensors and mon.sensors.energy
+    if e then rows[#rows + 1] = { "Energy", ("%d%%  %s"):format(e.value, e.label or "") } end
+    local names = {}
+    for _, al in ipairs(mon.alerts or {}) do names[#names + 1] = al.name end
+    rows[#rows + 1] = { "Alerts", #names > 0 and table.concat(names, ", ") or "all clear" }
+  end
   for i, r in ipairs(rows) do
     T.at(X, 4 + i, r[1], "lavender")
     T.at(X + 10, 4 + i, (r[2] ~= "" and r[2] or "-"):sub(1, T.W - X - 12), "white")
