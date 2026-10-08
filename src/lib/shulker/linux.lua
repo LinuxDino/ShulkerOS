@@ -25,13 +25,22 @@ function M.hasMD() return U.exists("/proc/mdstat") end
 ---------------------------------------------------------------- drives
 local function sysread(p) return U.trim(U.read(p) or "") end
 
--- the device mounted at /
+-- the drive mounted at /. /proc/mounts often says /dev/root, so match the device number instead
 function M.rootDev()
+  for _, l in ipairs(U.lines("/proc/self/mountinfo")) do
+    local majmin, mnt = l:match("^%S+%s+%S+%s+(%d+:%d+)%s+%S+%s+(%S+)")
+    if mnt == "/" then
+      local ls = U.capture("ls /sys/block 2>/dev/null")
+      for name in ls:gmatch("%S+") do
+        if sysread("/sys/block/" .. name .. "/dev") == majmin then return "/dev/" .. name end
+      end
+    end
+  end
   for _, l in ipairs(U.lines("/proc/mounts")) do
     local dev, mnt = l:match("^(%S+)%s+(%S+)")
-    if mnt == "/" and dev:match("^/dev/") then return dev end
+    if mnt == "/" and dev:match("^/dev/vd") then return dev end
   end
-  return "/dev/vda"
+  return "/dev/vda"   -- OC2 always boots from the first drive
 end
 
 function M.mounts()
@@ -70,7 +79,7 @@ end
 function M.spare()
   local s = {}
   for _, d in ipairs(M.drives()) do
-    if d.name:match("^vd") and not d.root and not d.mount and not d.md then s[#s + 1] = d end
+    if d.name:match("^vd") and not d.root and d.name ~= "vda" and not d.mount and not d.md then s[#s + 1] = d end
   end
   return s
 end

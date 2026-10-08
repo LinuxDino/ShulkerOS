@@ -148,9 +148,9 @@ end
 -- NO_COLOR or SHULKER_THEME=plain turns colours off.
 local themes = {
   shulker = { accent = "35", soft = "95", text = "97", dim = "90", ok = "92", warn = "93", err = "91",
-              info = "36", bold = "1" },
+              info = "36", bold = "1", bright = "1;97" },
   ender   = { accent = "36", soft = "96", text = "97", dim = "90", ok = "92", warn = "93", err = "91",
-              info = "35", bold = "1" },
+              info = "35", bold = "1", bright = "1;97" },
 }
 local function colorOn()
   if os.getenv("NO_COLOR") then return false end
