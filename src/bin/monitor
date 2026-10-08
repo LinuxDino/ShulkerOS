@@ -107,6 +107,7 @@ elseif cmd == "stop" then
   os.remove(PID)
   print("monitor stopped")
 elseif cmd == "daemon" then
+  require("shulker.devices").daemonOnly = true     -- never hold the OC2 bus ports (see devices.lua)
   local active = {}
   while true do
     local conf = M.load()

@@ -82,6 +82,7 @@ while a[i] do
 end
 
 if not dev and not FB.find() then noProjector() end
+require("shulker.devices").daemonOnly = true     -- it runs for hours: share the OC2 bus, never hold it
 local fb, err = FB.open(dev)
 if not fb then U.die("dashboard: " .. err) end
 if not dev or dev:match("^/dev/fb") then fbcon(false) end

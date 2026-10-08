@@ -118,6 +118,9 @@ end
 local isRobot
 function M.droneInfo()
   if isRobot == false then return nil end
+  -- swarmd runs all the time: it must reach the robot through OC2's bus daemon only (see devices.lua)
+  require("shulker.devices").daemonOnly = true
+  if not U.exists("/run/oc2/bus") then return nil end
   local ok, D = pcall(require, "shulker.drone")
   if not ok then isRobot = false return nil end
   local info = D.isDrone() and D.info() or nil

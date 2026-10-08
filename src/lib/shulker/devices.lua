@@ -10,9 +10,18 @@ local function addPath()
   end
 end
 
+-- Long-running services (swarmd, the monitor, the dashboard) set daemonOnly: they use the bus only
+-- through OC2's bus daemon (/run/oc2/bus), never by opening the virtio ports themselves. A process that
+-- holds the ports keeps the daemon from starting, and then every other program gets "Resource busy".
+M.daemonOnly = false
+M.SOCKET = "/run/oc2/bus"
+
 local bus
 function M.bus()
   if bus then return bus end
+  if M.daemonOnly and not U.exists(M.SOCKET) then
+    return nil, "waiting for the OC2 bus daemon (" .. M.SOCKET .. ")"
+  end
   addPath()
   local ok, b = pcall(require, "devices")
   if not ok then
