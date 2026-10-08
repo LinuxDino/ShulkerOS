@@ -8,6 +8,7 @@
 #     data/shulkeros/block_devices/hdd/shulkeros.bin (+ .json)
 #                                                           a "Shulker OS" hard drive: Sedna with Shulker
 #                                                           OS preinstalled in /opt/shulker
+#     .../shulkeros-node.bin, shulkeros-drone.bin, shulkerlinux.bin (when linux/dist has an image)
 #
 #   tools/build-datapack.sh [--no-hdd] [--sedna DIR] [--layer-dir DIR]
 #     --no-hdd      only the file system layer (small; no Sedna binaries redistributed)
@@ -121,6 +122,11 @@ DRONECMDS
 	if grep -qi "error\|could not\|no space" "$B/debugfs-drone.log"; then cat "$B/debugfs-drone.log" >&2; exit 1; fi
 	e2fsck -fn "$DRONE" > "$B/fsck-drone.log" 2>&1 || { cat "$B/fsck-drone.log" >&2; echo "the drone image does not pass e2fsck" >&2; exit 1; }
 	echo '{ "name": "Shulker Drone", "color": "cyan" }' > "$(dirname "$IMG")/shulkeros-drone.json"
+	# Shulker Linux (tools/build-linux.sh): Sedna rebuilt with RAID, ext4, tmux, curl; Shulker OS inside
+	if [ -f linux/dist/rootfs.ext2.gz ]; then
+		gunzip -c linux/dist/rootfs.ext2.gz > "$(dirname "$IMG")/shulkerlinux.bin"
+		echo '{ "name": "Shulker Linux", "color": "blue" }' > "$(dirname "$IMG")/shulkerlinux.json"
+	fi
 	free=$(debugfs -R stats "$IMG" 2>/dev/null | awk -F: '/^Free blocks/ {gsub(/ /, "", $2); print $2}')
 	echo "hdd image: $(du -k "$IMG" | cut -f1) KB, $free KB free inside"
 fi
