@@ -30,7 +30,7 @@ usage: shulker version                 version, where it's installed, repository
        shulker linux kernel            upgrade to the Shulker Linux kernel (/boot/Image)
        shulker linux install [DEV]     write Shulker Linux to an empty drive (then swap drives)
        shulker disks [setup --raid0|--linear|--raid1|--separate]   extra drives as /data
-       shulker mkdisk [node|plain] [--all|DEV...]   make Shulker Node drives from blank drives
+       shulker mkdisk [lab|robot|plain] [--all|DEV...]   make ready drives from blank drives
        shulker slim [--yes]            remove MicroPython and tcc (about 650 KB) to make room
        shulker setup                   run the setup wizard again
        shulker enable|disable claude   turn the Claude assistant on or off
@@ -82,14 +82,24 @@ elseif cmd == "slim" then
   os.exit(0)
 elseif cmd == "mkdisk" then
   local L = require("shulker.linux")
-  local kind, want, yes = "node", {}, false
+  local KINDS = {
+    { id = "node", name = "Lab", alias = { lab = 1, node = 1 },
+      text = "swarm computer: joins the main, its other drives become /data (RAID), jobs run there" },
+    { id = "drone", name = "Robot", alias = { robot = 1, drone = 1 },
+      text = "drone: joins through its drone base, reports battery and position, charges by itself" },
+    { id = "plain", name = "Plain", alias = { plain = 1 },
+      text = "Shulker OS with the setup wizard at the first login (a main or personal computer)" },
+  }
+  local kind, want, yes = nil, {}, false
   for i = 2, #a do
-    local x = a[i]
-    if x == "node" or x == "plain" then kind = x
+    local x = a[i]:lower()
+    local k
+    for _, K in ipairs(KINDS) do if K.alias[x] then k = K end end
+    if k then kind = k
     elseif x == "--yes" or x == "-y" then yes = true
     elseif x == "--all" then
     elseif x:match("^/dev/vd%a$") then want[#want + 1] = x
-    else U.die("usage: shulker mkdisk [node|plain] [--all | /dev/vdX ...] [--yes]") end
+    else U.die("usage: shulker mkdisk [lab|robot|plain] [--all | /dev/vdX ...] [--yes]") end
   end
   local spare, devs = L.spare(), {}
   for _, d in ipairs(spare) do
@@ -100,22 +110,44 @@ elseif cmd == "mkdisk" then
   if #devs == 0 then
     U.die("shulker: no blank drive. Shut down, put blank hard drives in the other bays, start, try again.")
   end
+  local chat = require("shulker.chat")
+  if not kind then
+    if yes then kind = KINDS[1] else
+      print(c("bright", "What should the drives become?"))
+      for i, K in ipairs(KINDS) do print(("  %s %-6s %s"):format(c("accent", i .. ")"), K.name, c("dim", K.text))) end
+      local ans = chat.ttyRead("Choose 1-3 [1]: ")
+      if not ans then os.exit(1) end
+      ans = U.trim(ans)
+      kind = KINDS[tonumber(ans) or 1]
+      if ans ~= "" and not tonumber(ans) then
+        for _, K in ipairs(KINDS) do if K.alias[ans:lower()] then kind = K end end
+      end
+      if not kind then U.die("shulker: choose 1, 2 or 3") end
+    end
+  end
   local names = {}
   for _, d in ipairs(devs) do names[#names + 1] = d.dev end
-  print(("Makes %d %s drive%s on %s."):format(#devs, kind == "node" and "Shulker Node" or "Shulker OS",
-    #devs == 1 and "" or "s", table.concat(names, " ")))
-  if kind == "node" then
-    print("A node drive joins the swarm main (10.42.0.1) by itself and, at its first start,")
+  print(("Makes %d Shulker %s drive%s on %s."):format(#devs, kind.name, #devs == 1 and "" or "s", table.concat(names, " ")))
+  if kind.id == "node" then
+    print("A Lab drive joins the swarm main (10.42.0.1) by itself and, at its first start,")
     print(c("warn", "turns the other drives of the computer it goes into into /data, erasing them."))
+  elseif kind.id == "drone" then
+    print("A Robot drive goes into a robot with a network tunnel module, linked to a drone base")
+    print("(a Lab computer with a tunnel card: `swarm base` on it).")
   end
   if not yes then
-    local ans = require("shulker.chat").ttyRead("Erase " .. table.concat(names, " ") .. "? [y/N] ")
+    local ans = chat.ttyRead("Erase " .. table.concat(names, " ") .. "? [y/N] ")
     if not ans or not ans:lower():match("^y") then os.exit(1) end
   end
-  local n, err = L.makeDisks(devs, kind, function(m) print(c("accent", "::") .. " " .. m) end)
+  local n, err = L.makeDisks(devs, kind.id, function(m) print(c("accent", "::") .. " " .. m) end)
   if not n then U.die("shulker: " .. err) end
-  print(c("ok", ("%d drive%s ready."):format(n, n == 1 and "" or "s")))
-  print("Shut this computer down, take the drives out and put each one in the FIRST bay of a node.")
+  print(c("ok", ("%d %s drive%s ready."):format(n, kind.name, n == 1 and "" or "s")))
+  if kind.id == "drone" then
+    print("Shut this computer down, take the drives out and put one in each robot.")
+    print("Place each robot on its charger first: that spot is its home (0 0 0).")
+  else
+    print("Shut this computer down, take the drives out and put each one in the FIRST bay of a computer.")
+  end
   os.exit(0)
 elseif cmd == "linux" or cmd == "disks" then
   local L = require("shulker.linux")

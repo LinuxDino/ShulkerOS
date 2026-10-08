@@ -86,7 +86,7 @@ pack means following those licenses.
    `swarm bench`. Hubs pass 32 frames a tick and every computer runs on its own thread, so 10 or 18 workers are fine.
 
 **Making node drives**: one extra computer on the main's network, with Shulker OS and 3 blank drives in its other
-bays, runs `shulker mkdisk`: it writes ready **Shulker Node** drives (slim Sedna with the RAID kernel and mdadm, about
+bays, runs `shulker mkdisk` and picks **Lab** (swarm computer) or **Robot** (drone): it writes ready drives (slim Sedna with the RAID kernel and mdadm, about
 1.2 MB free, Shulker OS set up as a worker). Put one in the first bay of each node: it joins the main and turns the
 node's other drives into a RAID `/data` at its first start; swarm jobs run in `/data`.
 

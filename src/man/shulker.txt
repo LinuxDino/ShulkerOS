@@ -8,7 +8,7 @@ SYNOPSIS
   shulker doctor
   shulker linux [status | kernel | install [DEV]]
   shulker disks [status | setup [--raid0|--linear|--raid1|--separate] | mount]
-  shulker mkdisk [node|plain] [--all | /dev/vdX ...] [--yes]
+  shulker mkdisk [lab|robot|plain] [--all | /dev/vdX ...] [--yes]
   shulker slim [--yes]
   shulker setup
   shulker enable|disable claude
@@ -58,10 +58,15 @@ DESCRIPTION
              kernel and mdadm: about 1.2 MB stays free on an 8 MB drive),
              copies it to the other blank drives, and puts this computer's
              own Shulker OS on each, so run `shulker update` first.
-               node   (default) joins the swarm main at 10.42.0.1 by itself,
+             Without a type it asks:
+               lab    (node) joins the swarm main at 10.42.0.1 by itself,
                       and at its first start turns the other drives of its
                       computer into /data (RAID 0), erasing them; jobs run
                       in /data
+               robot  (drone) for a robot's one drive bay: joins through
+                      its drone base (a lab computer with a tunnel card,
+                      `swarm base`), reports battery and position, goes
+                      home to its charger when low
                plain  the setup wizard runs at the first login
              Then shut down, take the drives out, put each one in the first
              bay of a computer. Empty floppy/flash drives are never used.

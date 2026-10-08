@@ -176,7 +176,8 @@ end
 ---------------------------------------------------------------- making node drives (the disk maker)
 -- `shulker mkdisk`: write the slim system (stock Sedna without MicroPython and tcc, with the RAID kernel
 -- and mdadm) onto blank drives, then this computer's own Shulker OS on top, set up as KIND:
---   node   joins the swarm main at 10.42.0.1 by itself and turns its other drives into /data
+--   node   "Lab": joins the swarm main at 10.42.0.1 by itself and turns its other drives into /data
+--   drone  "Robot": joins through its drone base, reports battery and position, goes home to charge
 --   plain  the setup wizard runs at the first login (for a main or a personal computer)
 M.SLIM_KB = 8192
 
@@ -195,11 +196,16 @@ local function installShulker(mnt, kind)
   sh(("cp %s/etc/rc.shulker %s/etc/init.d/S95shulker && chmod 755 %s/etc/init.d/S95shulker"):format(U.q(home), mnt, mnt))
   sh(("cp %s/share/issue %s/etc/issue && cp %s/share/motd %s/etc/motd"):format(U.q(home), mnt, U.q(home), mnt))
   U.write(mnt .. "/etc/shulker/repo.conf", ("repo=%s\nbranch=main\n"):format(pkg.DEFAULT_REPO))
-  if kind == "node" then
-    U.write(mnt .. "/etc/shulker/swarm.conf", "# Shulker Swarm (see `man swarm`)\nleader=10.42.0.1\nport=4242\nrole=worker\n")
+  if kind == "node" or kind == "drone" then
+    -- a lab node talks to the main directly; a robot reaches it through its drone base (its gateway)
+    local leader = kind == "node" and "10.42.0.1" or "auto"
+    U.write(mnt .. "/etc/shulker/swarm.conf", ("# Shulker Swarm (see `man swarm`)\nleader=%s\nport=4242\nrole=worker\n"):format(leader))
     sh("chmod 600 " .. mnt .. "/etc/shulker/swarm.conf")
-    U.write(mnt .. "/etc/shulker/setup.conf", "# a Shulker Node drive (shulker mkdisk): no setup wizard\nrole=worker\nclaude=off\n")
+    U.write(mnt .. "/etc/shulker/setup.conf", ("# a %s drive (shulker mkdisk): no setup wizard\nrole=%s\nclaude=off\n")
+      :format(kind == "node" and "Shulker Lab" or "Shulker Robot", kind == "node" and "worker" or "drone"))
     U.write(mnt .. "/etc/network/interfaces", "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n")
+  end
+  if kind == "node" then
     -- first start: the computer's other drives become one /data (rc.shulker, `shulker disks setup --yes`)
     U.write(mnt .. "/etc/shulker/autodisks", "made by shulker mkdisk " .. os.date("%Y-%m-%d") .. "\n")
   end
