@@ -47,3 +47,4 @@ python3 tests/qemu/test_sedna.py --sedna $W/sedna --builtin $W/builtin-dp --mode
 python3 tests/qemu/test_sedna.py --sedna $W/sedna --rootfs $W/shulkeros.bin --builtin $W/builtin-ci --mode hdd --log $W/vm-hdd.log
 python3 tests/qemu/test_sedna.py --sedna $W/sedna --rootfs $W/shulkeros.bin --builtin $W/builtin-ci --mode wizard --log $W/vm-wizard.log
 python3 tests/qemu/test_swarm.py --sedna $W/sedna --images dist/build/pack/data/shulkeros/block_devices/hdd --workers 3 --logdir $W
+python3 tests/qemu/test_dronebase.py --sedna $W/sedna --images dist/build/pack/data/shulkeros/block_devices/hdd --logdir $W

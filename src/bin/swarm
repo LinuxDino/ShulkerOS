@@ -142,11 +142,15 @@ elseif cmd == "base" then
   S.stopServices()
   S.startServices(conf)
   if conf.base == "0" then print("This computer is no longer a drone base.") os.exit(0) end
-  local links = S.links()
-  if #links == 0 then
+  local links, uplink = S.links()
+  if not uplink then
+    print(c("err", "No connection to the main computer found.") .. " This base needs a network interface card")
+    print("cabled to the swarm network (the main hands it a 10.42.0.x address). Check the cable, then `swarm base` again.")
+  elseif #links == 0 then
     print(c("warn", "No tunnel link found.") .. " Put a network tunnel card in this computer (shut it down first),")
     print("link it to the tunnel module of the drone (use the card, insert the module), then run `swarm base` again.")
   else
+    print(("Uplink to the main: %s (%s)"):format(uplink, tostring(S.addrOf(uplink))))
     print(c("ok", "Drone base ready.") .. " Links: ")
     for _, l in ipairs(links) do print(("  %s  %s.0/24, drones get %s.10-60"):format(l.iface, l.net, l.net)) end
     print("On a drone without the Shulker Drone drive, type:")

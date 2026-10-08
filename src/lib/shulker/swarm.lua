@@ -61,9 +61,57 @@ function M.mac()
   return m ~= "" and m or nil
 end
 
+-- the network interfaces, eth0 first
+function M.ifaces()
+  local list = {}
+  for n in U.capture("ls /sys/class/net 2>/dev/null"):gmatch("%S+") do
+    if n:match("^eth%d+$") then list[#list + 1] = n end
+  end
+  table.sort(list, function(a, b) return tonumber(a:match("%d+")) < tonumber(b:match("%d+")) end)
+  return list
+end
+
+local function addrOf(iface)
+  return U.capture("ip -4 -o addr show " .. iface .. " 2>/dev/null"):match("inet (%d+%.%d+%.%d+%.%d+)")
+end
+M.addrOf = addrOf
+
+-- the interface towards the main node. OC2 numbers network cards by slot, so on a drone base the
+-- network card is not always eth0: the uplink is the interface with a swarm address (10.42.0.x),
+-- remembered in swarm.conf (uplink=ethN) once found
+function M.uplink(conf)
+  conf = conf or M.loadConf()
+  local prefix = "^" .. M.SUBNET:gsub("%.", "%%.") .. "%."
+  for _, n in ipairs(M.ifaces()) do
+    local a = addrOf(n)
+    if a and a:match(prefix) then
+      if conf.uplink ~= n and conf.role then conf.uplink = n pcall(M.saveConf, conf) end
+      return n
+    end
+  end
+  if conf.uplink and U.exists("/sys/class/net/" .. conf.uplink) then return conf.uplink end
+  return nil
+end
+
+-- ask every interface for a swarm address until one gets it (a base whose card order is unknown)
+function M.findUplink(conf)
+  local up = M.uplink(conf)
+  if up then return up end
+  for _, n in ipairs(M.ifaces()) do
+    os.execute(("ip link set %s up; udhcpc -n -q -t 2 -T 2 -i %s >/dev/null 2>&1"):format(n, n))
+    up = M.uplink(conf)
+    if up then return up end
+  end
+  return nil
+end
+
 function M.ip()
-  local out = U.capture("ip -4 -o addr show eth0 2>/dev/null")
-  return out:match("inet (%d+%.%d+%.%d+%.%d+)")
+  local conf = M.loadConf()
+  if conf.base == "1" then
+    local up = M.uplink(conf)
+    return up and addrOf(up) or nil
+  end
+  return addrOf("eth0")
 end
 
 -- robots report energy, position and modules (nil on normal computers; checked once)
@@ -447,17 +495,13 @@ end
 -- link to one drone. The base gives each link the subnet 10.43.K.0/24 (it is 10.43.K.1), hands the
 -- drone an address by DHCP, and relays the drone's swarm requests and network install to the main node.
 function M.links()
-  local uplink = M.ip() and "eth0" or nil
   local out = {}
-  local names = U.capture("ls /sys/class/net 2>/dev/null")
-  local list = {}
-  for n in names:gmatch("%S+") do if n:match("^eth%d+$") then list[#list + 1] = n end end
-  table.sort(list, function(a, b) return tonumber(a:match("%d+")) < tonumber(b:match("%d+")) end)
-  -- the uplink is the interface on the swarm network (10.42.0.x); every other one is a drone link
-  for _, n in ipairs(list) do
-    local addr = U.capture("ip -4 -o addr show " .. n .. " 2>/dev/null"):match("inet (%d+%.%d+%.%d+%.%d+)")
-    if addr and addr:match("^" .. M.SUBNET:gsub("%.", "%%.") .. "%.") then uplink = n end
-  end
+  local list = M.ifaces()
+  -- the uplink is the interface on the swarm network (10.42.0.x); every other one is a drone link.
+  -- Without a known uplink there are no links: handing out drone addresses on the swarm network
+  -- itself would break it
+  local uplink = M.findUplink()
+  if not uplink then return out, nil end
   local k = 0
   for _, n in ipairs(list) do
     if n ~= uplink then

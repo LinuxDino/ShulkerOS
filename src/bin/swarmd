@@ -207,7 +207,10 @@ while true do
   -- no address yet (the main node was off when this one booted): keep asking for one
   if not S.ip() and os.time() - lastDhcp >= 20 then
     lastDhcp = os.time()
-    os.execute("udhcpc -n -q -t 3 -i eth0 >/dev/null 2>&1")
+    if conf.base == "1" then
+      -- a base that found its uplink now: give the drones their addresses and the relay
+      if S.findUplink(conf) then S.startServices(conf) end
+    else os.execute("udhcpc -n -q -t 3 -i eth0 >/dev/null 2>&1") end
   end
   local stats = S.stats()
   -- drones: below 15 % energy, drive home to the charger (once, until charged above 50 %)
