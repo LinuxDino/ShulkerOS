@@ -105,6 +105,22 @@ NODECMDS
 	if grep -qi "error\|could not\|no space" "$B/debugfs-node.log"; then cat "$B/debugfs-node.log" >&2; exit 1; fi
 	e2fsck -fn "$NODE" > "$B/fsck-node.log" 2>&1 || { cat "$B/fsck-node.log" >&2; echo "the node image does not pass e2fsck" >&2; exit 1; }
 	echo '{ "name": "Shulker Swarm Node", "color": "magenta" }' > "$(dirname "$IMG")/shulkeros-node.json"
+
+	# a drone (robot) drive: DHCP from its drone base over the tunnel link, joins through it
+	DRONE="$(dirname "$IMG")/shulkeros-drone.bin"
+	cp "$NODE" "$DRONE"
+	printf '# Shulker Swarm (see `man swarm`)\nleader=auto\nport=4242\nrole=worker\n' > "$B/swarm-drone.conf"
+	printf '# preset by the Shulker Drone drive: no setup wizard\nrole=drone\nclaude=off\n' > "$B/setup-drone.conf"
+	debugfs -w -f - "$DRONE" > "$B/debugfs-drone.log" 2>&1 <<DRONECMDS
+rm /etc/shulker/swarm.conf
+write $B/swarm-drone.conf /etc/shulker/swarm.conf
+set_inode_field /etc/shulker/swarm.conf mode 0100600
+rm /etc/shulker/setup.conf
+write $B/setup-drone.conf /etc/shulker/setup.conf
+DRONECMDS
+	if grep -qi "error\|could not\|no space" "$B/debugfs-drone.log"; then cat "$B/debugfs-drone.log" >&2; exit 1; fi
+	e2fsck -fn "$DRONE" > "$B/fsck-drone.log" 2>&1 || { cat "$B/fsck-drone.log" >&2; echo "the drone image does not pass e2fsck" >&2; exit 1; }
+	echo '{ "name": "Shulker Drone", "color": "cyan" }' > "$(dirname "$IMG")/shulkeros-drone.json"
 	free=$(debugfs -R stats "$IMG" 2>/dev/null | awk -F: '/^Free blocks/ {gsub(/ /, "", $2); print $2}')
 	echo "hdd image: $(du -k "$IMG" | cut -f1) KB, $free KB free inside"
 fi

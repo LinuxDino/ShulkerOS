@@ -46,6 +46,8 @@ local ROLES = {
   { id = "personal", label = "Personal computer", help = "Your own Linux computer: tasks, apps, internet. The usual choice." },
   { id = "main", label = "Swarm main", help = "Controls a swarm: hands out addresses, schedules jobs, shows the topology." },
   { id = "worker", label = "Swarm worker", help = "Joins a swarm and runs its jobs (or use the Swarm Node drive)." },
+  { id = "base", label = "Drone base", help = "A swarm worker with network tunnel cards, linked to drones." },
+  { id = "drone", label = "Drone (this is a robot)", help = "Joins the swarm through its drone base; takes commands." },
 }
 
 local function conf()
@@ -195,7 +197,14 @@ local function askNetwork(state)
     if not i then return false end
     state.work = i == 1
     return true
-  elseif state.role == "worker" then
+  elseif state.role == "drone" then
+    T.text(3, 5, T.W - 6, "Drones get their address from their drone base over the tunnel link and join the swarm through it. Put a charger where the drone starts: that is its home.", "white")
+    state.net = "dhcp"
+    T.button(3, 9, "Continue", "enter")
+    T.button(16, 9, "Back", "esc", "quiet")
+    T.flush()
+    while true do local ev = T.event() if ev.type == "button" then return ev.key == "enter" end end
+  elseif state.role == "worker" or state.role == "base" then
     T.text(3, 5, T.W - 6, "Workers get their address from the swarm main by DHCP and join it by themselves. The main computer must be accepting new nodes (`swarm enroll` there).", "white")
     T.at(3, 9, "Address of the swarm main:", "lavender")
     footer("Enter: next   Esc: back")
@@ -255,7 +264,8 @@ local function summary(state)
     { "Name", state.name },
     { "Password", state.password and "will be changed" or "unchanged" },
     { "Role", roleLabel(state.role) .. (state.role == "main" and (state.work and ", runs jobs too" or ", manages only") or "") },
-    { "Network", state.role == "main" and "10.42.0.1 + DHCP for the swarm" or state.role == "worker" and ("DHCP, joins " .. state.leader)
+    { "Network", state.role == "main" and "10.42.0.1 + DHCP for the swarm" or state.role == "drone" and "DHCP from its drone base"
+      or (state.role == "worker" or state.role == "base") and ("DHCP, joins " .. state.leader)
       or ({ gateway = "Internet Gateway, fixed address", dhcp = "DHCP", none = "none for now" })[state.net] },
     { "SSH", state.ssh and "on" or "off" },
     { "Claude", state.claude and "on (asks for the key on first use)" or "off" },
@@ -319,9 +329,20 @@ local function apply(state)
       local _, code = U.capture(U.q(bin .. "swarm") .. " init" .. (state.work and " --work" or ""))
       return code == 0
     end)
-  elseif state.role == "worker" then
+  elseif state.role == "worker" or state.role == "base" then
     step("swarm worker, joining " .. state.leader, function()
       local _, code = U.capture(U.q(bin .. "swarm") .. " join " .. U.q(state.leader))
+      return code == 0
+    end)
+    if state.role == "base" then
+      step("drone base (tunnel links, relay)", function()
+        local _, code = U.capture(U.q(bin .. "swarm") .. " base")
+        return code == 0
+      end)
+    end
+  elseif state.role == "drone" then
+    step("drone: joins the swarm through its base", function()
+      local _, code = U.capture(U.q(bin .. "swarm") .. " join auto")
       return code == 0
     end)
   else

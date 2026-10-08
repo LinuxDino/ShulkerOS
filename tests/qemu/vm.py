@@ -22,6 +22,7 @@ class Sedna:
         (like OC2 computers cabled to one hub); mac: this VM's MAC address on it."""
         self.lan, self.mac = lan, mac
         self.keep_wizard = False
+        self.lan2 = None          # a second NIC (eth1) on another segment, like an OC2 tunnel card
         self.rootfs, self.kernel, self.builtin = rootfs, kernel, builtin
         self.memory, self.copy, self.log, self.hostfwd = memory, copy, log, hostfwd
         self.child = None
@@ -48,6 +49,9 @@ class Sedna:
                 "-kernel", self.kernel, "-append", "root=/dev/vda rw console=ttyS0",
                 "-drive", f"file={disk},format=raw,if=none,id=hd0", "-device", "virtio-blk-device,drive=hd0",
                 "-netdev", net, "-device", "virtio-net-device,netdev=n0" + (",mac=" + self.mac if self.mac else "")]
+        if self.lan2:
+            args += ["-netdev", "socket,id=n1,mcast=" + self.lan2,
+                     "-device", "virtio-net-device,netdev=n1,mac=" + (self.mac or "52:54:00:00:00:99")[:-2] + "aa"]
         if self.builtin:
             args += ["-fsdev", f"local,id=fs0,path={os.path.abspath(self.builtin)},security_model=none,readonly=on",
                      "-device", "virtio-9p-device,fsdev=fs0,mount_tag=builtin"]

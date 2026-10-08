@@ -23,9 +23,12 @@ local USAGE = [==[
 usage: swarm init [--work]          make this computer the main node (--work: it runs jobs too)
        swarm join [MAIN-IP]         make this computer a worker (default main 10.42.0.1)
        swarm status                 nodes, load, memory, disk, jobs
-       swarm top                    live topology: gateway, main, nodes, traffic
+       swarm top                    live topology: gateway, main, nodes, drones, traffic
+       swarm base [off]             make this worker a drone base (network tunnel cards)
+       swarm drones                 every drone: base, energy, position, modules
+       swarm drone NAME COMMAND     e.g. swarm drone drone1 go 10 0 -5 (see `man drone`)
        swarm run [--on NODE] CMD    run CMD on every node (or one) and show the output
-       swarm submit CMD             queue CMD for any free node, print the job number
+       swarm submit [--on NODE] CMD queue CMD for any free node (or one), print the job number
        swarm map 'CMD {}' ITEM...   one job per ITEM ({} = the item) spread over the nodes
        swarm jobs | result ID | wait ID... | cancel ID|--all
        swarm enroll [MINUTES]       accept new nodes for a while (default 30)
@@ -72,7 +75,7 @@ end
 
 local function showJob(j, header)
   local mark = j.state == "done" and c("ok", "ok") or c("err", j.state)
-  if header then print(c("accent", ("== %s"):format(j.node or "?")) .. "  " .. mark .. c("dim", (" job %d, exit %s"):format(j.id, tostring(j.rc)))) end
+  if header then print(c("accent", ("== %s"):format(j.node or "?")) .. "  " .. mark .. c("dim", (" job %d, exit %s"):format(j.id, S.exitText and S.exitText(j.rc) or tostring(j.rc)))) end
   local out = tostring(j.out or "")
   if out ~= "" then io.write(out, out:sub(-1) == "\n" and "" or "\n") end
 end
@@ -123,6 +126,27 @@ elseif cmd == "join" then
   S.startServices(conf)
   print(c("ok", "Joining the swarm at " .. conf.leader .. ".") .. " Check with `swarm status` in a few seconds.")
   print(c("dim", "(The main node must be accepting nodes: `swarm enroll` there.)"))
+  os.exit(0)
+elseif cmd == "base" then
+  -- a drone base: this worker relays for drones linked by network tunnel cards
+  needRoot()
+  local conf = S.loadConf()
+  if conf.role ~= "worker" then U.die("swarm: join the swarm first (`swarm join`), then make this computer a drone base") end
+  conf.base = (a[2] == "off") and "0" or "1"
+  S.saveConf(conf)
+  S.stopServices()
+  S.startServices(conf)
+  if conf.base == "0" then print("This computer is no longer a drone base.") os.exit(0) end
+  local links = S.links()
+  if #links == 0 then
+    print(c("warn", "No tunnel link found.") .. " Put a network tunnel card in this computer (shut it down first),")
+    print("link it to the tunnel module of the drone (use the card, insert the module), then run `swarm base` again.")
+  else
+    print(c("ok", "Drone base ready.") .. " Links: ")
+    for _, l in ipairs(links) do print(("  %s  %s.0/24, drones get %s.10-60"):format(l.iface, l.net, l.net)) end
+    print("On a drone without the Shulker Drone drive, type:")
+    print("  " .. c("soft", "udhcpc -i eth0 && wget -qO- http://" .. links[1].ip .. "/join | sh") .. "   (use the link's address)")
+  end
   os.exit(0)
 elseif cmd == "leave" then
   needRoot()
@@ -203,13 +227,39 @@ elseif cmd == "top" or cmd == "topology" then
       T.g(9, 7, "mqqk", "purple")
       T.at(14, 7, "hub", "gray")
       local y = 8
-      local workers = {}
-      for _, n in ipairs(r.nodes) do if not n.main then workers[#workers + 1] = n end end
+      local workers, dronesOf = {}, {}
+      for _, n in ipairs(r.nodes) do
+        if n.stats and n.stats.drone and n.via then
+          dronesOf[n.via] = dronesOf[n.via] or {}
+          table.insert(dronesOf[n.via], n)
+        elseif not n.main then
+          workers[#workers + 1] = n
+        end
+      end
+      -- put each base's drones right after it in the list
+      local rows = {}
+      for _, n in ipairs(workers) do
+        rows[#rows + 1] = n
+        local host = n.stats and n.stats.host
+        for _, d in ipairs(dronesOf[n.name] or dronesOf[host or ""] or {}) do d.isDrone = true rows[#rows + 1] = d end
+      end
+      workers = rows
       local room = T.H - 12
       local first = math.min(scroll, math.max(0, #workers - room))
       for i = first + 1, math.min(#workers, first + room) do
         local n = workers[i]
         local last = i == #workers
+        if n.isDrone then
+          T.g(12, y, last and " " or "x", "purple")
+          T.g(16, y, "mq", "aqua")
+          local d = n.stats.drone
+          T.at(19, y, ("%-7s"):format(n.name), n.online and "aqua" or "gray")
+          T.at(27, y, d.charge and ("energy %3d%%"):format(d.charge) or "energy ?", (d.charge or 100) < 15 and "pink" or "white")
+          T.at(40, y, d.pos and ("at %d %d %d"):format(d.pos.x, d.pos.y, d.pos.z) or "", "gray")
+          T.at(56, y, not n.online and "off" or n.busy and ("job " .. n.busy) or "idle", not n.online and "pink" or n.busy and "gold" or "lime")
+          y = y + 1
+          goto continue
+        end
         T.g(12, y, last and "mqq" or "tqq", "purple")
         local st = n.stats or {}
         local state, fg = "idle", "lime"
@@ -224,6 +274,7 @@ elseif cmd == "top" or cmd == "topology" then
           T.at(50, y, "last seen " .. S.age(n.seen) .. " ago", "gray")
         end
         y = y + 1
+        ::continue::
       end
       if #workers > room then T.at(16, y, ("(%d more: Up/Down to scroll)"):format(#workers - room), "gray") y = y + 1 end
       if #workers == 0 then T.at(16, y, "no workers yet: power them on (Swarm Node drive) or `swarm join`", "gray") end
@@ -246,6 +297,30 @@ elseif cmd == "top" or cmd == "topology" then
   end)
   if not once then T.stop() end
   if not ok and not tostring(err):find("interrupted") then U.die("swarm: " .. tostring(err)) end
+elseif cmd == "drones" then
+  local r = call({ op = "status" })
+  local n = 0
+  print(c("dim", ("%-8s %-10s %-6s %-8s %-14s %-8s %s"):format("DRONE", "BASE", "STATE", "ENERGY", "POSITION", "FACING", "MODULES")))
+  for _, x in ipairs(r.nodes) do
+    local d = x.stats and x.stats.drone
+    if d then
+      n = n + 1
+      local pos = d.pos and ("%d %d %d"):format(d.pos.x, d.pos.y, d.pos.z) or "?"
+      local state = not x.online and c("err", "off   ") or x.busy and c("warn", "busy  ") or c("ok", "idle  ")
+      local charge = d.charge and ((d.charge < 15 and c("err", "%3d%%") or "%3d%%"):format(d.charge)) or "  ?"
+      print(("%-8s %-10s %s %-8s %-14s %-8s %s"):format(c("soft", ("%-8s"):format(x.name)), x.via or "-", state, charge,
+        pos, tostring(d.facing or "?"), table.concat(d.modules or {}, ",")))
+    end
+  end
+  if n == 0 then print("No drones yet. See `man drone`: a robot with the Shulker Drone drive, linked to a drone base.") end
+elseif cmd == "drone" then
+  local name = a[2]
+  if not name or not a[3] then U.die("usage: swarm drone NAME COMMAND...   e.g. swarm drone drone1 go 10 0 -5") end
+  local command = "drone " .. table.concat(a, " ", 3)
+  local r = call({ op = "submit", cmd = command, target = name, timeout = 1800 })
+  local jobs = waitJobs(r.ids)
+  for _, j in ipairs(jobs) do showJob(j, false) end
+  os.exit(jobs[1] and jobs[1].state == "done" and 0 or 1)
 elseif cmd == "run" then
   local target, i = "all", 2
   if a[2] == "--on" then target, i = a[3], 4 end
@@ -258,9 +333,11 @@ elseif cmd == "run" then
   for _, j in ipairs(jobs) do showJob(j, true) if j.state ~= "done" then bad = bad + 1 end end
   os.exit(bad == 0 and 0 or 1)
 elseif cmd == "submit" then
-  local command = table.concat(a, " ", 2)
-  if command == "" then U.die("usage: swarm submit COMMAND") end
-  local r = call({ op = "submit", cmd = command, target = "any" })
+  local target, i = "any", 2
+  if a[2] == "--on" then target, i = a[3], 4 end
+  local command = table.concat(a, " ", i)
+  if command == "" then U.die("usage: swarm submit [--on NODE] COMMAND") end
+  local r = call({ op = "submit", cmd = command, target = target })
   print(r.ids[1])
 elseif cmd == "map" then
   local template = a[2]
@@ -274,7 +351,7 @@ elseif cmd == "map" then
   table.sort(jobs, function(x, y) return x.id < y.id end)
   local bad = 0
   for k, j in ipairs(jobs) do
-    if j.state ~= "done" then bad = bad + 1 io.stderr:write(c("err", ("%s: %s on %s (exit %s)\n"):format(items[k], j.state, j.node or "?", tostring(j.rc)))) end
+    if j.state ~= "done" then bad = bad + 1 io.stderr:write(c("err", ("%s: %s on %s (exit %s)\n"):format(items[k], j.state, j.node or "?", S.exitText(j.rc)))) end
     showJob(j, false)
   end
   io.stderr:write(c("dim", ("%d job%s in %ds\n"):format(#jobs, #jobs == 1 and "" or "s", secs)))

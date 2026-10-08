@@ -19,8 +19,8 @@ local json = require("shulker.json")
 local S = require("shulker.swarm")
 
 local mode = arg[1]
-if mode ~= "leader" and mode ~= "worker" then
-  io.stderr:write("usage: swarmd leader|worker   (normally started at boot; see `man swarm`)\n")
+if mode ~= "leader" and mode ~= "worker" and mode ~= "relay" then
+  io.stderr:write("usage: swarmd leader|worker|relay   (normally started at boot; see `man swarm`)\n")
   os.exit(2)
 end
 if not S.socket then io.stderr:write("swarmd: luasocket is missing\n") os.exit(1) end
@@ -84,6 +84,70 @@ if mode == "leader" then
   end
 end
 
+---------------------------------------------------------------- relay (drone base)
+-- drones talk to their base; the base passes their requests on to the main node, marked "via" itself
+if mode == "relay" then
+  local conf = S.loadConf()
+  local upstream = S.leaderOf(conf)
+  local api = socket.bind("*", conf.port)
+  local web = socket.bind("*", S.HTTP_PORT)
+  if not api then log("relay: cannot listen on port", conf.port) os.exit(1) end
+  api:settimeout(0)
+  if web then web:settimeout(0) end
+  log("relay for drones, to the main node", upstream)
+  local function hostname() return conf.name or U.trim(U.read("/etc/hostname") or "base") end
+  while true do
+    local ready = socket.select(web and { api, web } or { api }, nil, 5)
+    if ready and ready[api] then
+      local c = api:accept()
+      if c then
+        c:settimeout(5)
+        local line = c:receive("*l")
+        local msg = line and json.decode(line)
+        local reply
+        if type(msg) == "table" then
+          msg.via = hostname()
+          local up = socket.tcp()
+          up:settimeout(15)
+          if up:connect(upstream, conf.port) then
+            up:send(json.encode(msg) .. "\n")
+            reply = up:receive("*l")
+          end
+          up:close()
+        end
+        c:send((reply or '{"error":"the drone base cannot reach the main node"}') .. "\n")
+        c:close()
+      end
+    end
+    if web and ready and ready[web] then
+      local c = web:accept()
+      if c then
+        c:settimeout(5)
+        local head = {}
+        repeat
+          local h = c:receive("*l")
+          if h then head[#head + 1] = h end
+        until not h or h == ""
+        local up = socket.tcp()
+        up:settimeout(30)
+        if up:connect(upstream, S.HTTP_PORT) then
+          up:send(table.concat(head, "\r\n") .. "\r\n")
+          while true do
+            local data, err, partial = up:receive(8192)
+            local chunk = data or partial
+            if chunk and #chunk > 0 then c:send(chunk) end
+            if not data then break end
+          end
+        end
+        up:close()
+        c:close()
+      end
+    end
+    conf = S.loadConf()
+    upstream = S.leaderOf(conf)
+  end
+end
+
 ---------------------------------------------------------------- worker
 local conf = S.loadConf()
 local joined = conf.name ~= nil and conf.token ~= nil
@@ -126,8 +190,9 @@ local function checkJob()
   running = nil
 end
 
-log("worker for", conf.leader .. ":" .. conf.port)
+log("worker for", S.leaderOf(conf) .. ":" .. conf.port)
 local lastDhcp = 0
+local goingHome = false
 while true do
   checkJob()
   -- no address yet (the main node was off when this one booted): keep asking for one
@@ -136,6 +201,17 @@ while true do
     os.execute("udhcpc -n -q -t 3 -i eth0 >/dev/null 2>&1")
   end
   local stats = S.stats()
+  -- drones: below 15 % energy, drive home to the charger (once, until charged above 50 %)
+  local d = stats.drone
+  if d and d.charge then
+    if d.charge < 15 and not goingHome and not running then
+      goingHome = true
+      log("energy low (" .. d.charge .. "%), going home to the charger")
+      os.execute("(" .. U.q(U.home() .. "/bin/drone") .. " home --dig > /tmp/drone-home.log 2>&1) &")
+    elseif d.charge > 50 then
+      goingHome = false
+    end
+  end
   local reply, err
   if not joined then
     reply, err = S.call(conf, { op = "join", stats = stats })

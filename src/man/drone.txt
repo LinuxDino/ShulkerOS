@@ -1,0 +1,47 @@
+drone - robots as drones in the swarm
+
+SYNOPSIS
+  drone status | move DIR [N] [--dig] | turn left|right|around | face DIR
+  drone go X Y Z [--dig] | home [--dig] | dig [SIDE] | place [SIDE]
+  drone inspect [SIDE] | scan | calibrate
+  swarm drones                       (on any swarm computer: every drone)
+  swarm drone NAME COMMAND...        (send a drone command, wait for the result)
+
+WHAT A DRONE IS
+  An OC2 robot running Shulker OS. It talks to the swarm through a drone base:
+  a swarm worker with network tunnel cards. Each tunnel card is linked to the
+  tunnel module of one drone (a computer has up to 4 card slots: one network
+  card for the swarm plus up to 3 tunnel cards, so 3 drones per base; use more
+  bases for more drones).
+
+SETTING ONE UP
+  The robot: CPU, memory, the "Shulker Drone" hard drive (data pack), a
+  network tunnel module, and the modules it needs: block operations (digging,
+  placing), inventory operations, scanner. Place a charger where the robot
+  starts: that spot is home (0 0 0).
+  Link the tunnel module and a network tunnel card: use (right-click) one
+  while holding it and insert the other.
+  The base: a swarm worker with that tunnel card (and its network card), set
+  up with `swarm base` (or "Drone base" in the setup wizard). It gives each
+  link its own network 10.43.K.0/24, hands the drone an address and passes
+  its traffic on to the main computer.
+  Power on the robot: it gets its address from the base, joins the swarm and
+  shows up as drone1, drone2, ... in `swarm drones` and `swarm top` (under
+  its base). Without the Shulker Drone drive, type on the robot:
+      udhcpc -i eth0 && wget -qO- http://10.43.1.1/join | sh
+  (10.43.1.1 is the first link of the base; `swarm base` prints the address.)
+
+COMMANDS
+  Positions are relative to the start: x grows east, y up, z south (OC2's
+  robot compass). From any swarm computer:
+      swarm drone drone1 status
+      swarm drone drone1 go 10 0 -5 --dig
+      swarm drone drone1 scan
+      swarm drone drone1 home
+  Longer work: a script run as a job, e.g.
+      swarm submit --on drone1 'drone move forward 8 --dig; drone home'
+
+SAFETY
+  Below 15% energy a drone stops waiting and drives home (to its charger) by
+  itself, digging if needed; it does that again only after charging above 50%.
+  `go` without --dig never breaks blocks: it reports where it got stuck.

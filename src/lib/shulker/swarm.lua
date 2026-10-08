@@ -66,6 +66,24 @@ function M.ip()
   return out:match("inet (%d+%.%d+%.%d+%.%d+)")
 end
 
+-- robots report energy, position and modules (nil on normal computers; checked once)
+local isRobot
+function M.droneInfo()
+  if isRobot == false then return nil end
+  local ok, D = pcall(require, "shulker.drone")
+  if not ok then isRobot = false return nil end
+  local info = D.isDrone() and D.info() or nil
+  if not info then isRobot = false end
+  return info
+end
+
+-- the leader address: "auto" = whoever gave us our address (the main node, or a drone base)
+function M.leaderOf(conf)
+  if conf.leader and conf.leader ~= "auto" then return conf.leader end
+  local gw = U.capture("ip route 2>/dev/null"):match("default via (%d+%.%d+%.%d+%.%d+)")
+  return gw or M.LEADER_IP
+end
+
 -- a small status report: what the leader and the dashboards show
 function M.stats()
   local meminfo = U.read("/proc/meminfo") or ""
@@ -83,6 +101,7 @@ function M.stats()
     disk_total = tonumber(f[2] or ""), disk_free = tonumber(f[4] or ""),
     uptime = math.floor(readNum("/proc/uptime", "^(%S+)") or 0),
     rx = tonumber(rx), tx = tonumber(tx),
+    drone = M.droneInfo(),
     version = U.trim(U.read(U.home() .. "/VERSION") or U.VERSION),
   }
 end
@@ -97,8 +116,9 @@ function M.call(conf, msg, timeout)
   msg.token = msg.token or conf.token
   local c = M.socket.tcp()
   c:settimeout(timeout or 10)
-  local ok, err = c:connect(conf.leader or M.LEADER_IP, conf.port or M.PORT)
-  if not ok then c:close() return nil, ("cannot reach the main node %s:%s (%s)"):format(conf.leader, conf.port, err) end
+  local leader = M.leaderOf(conf)
+  local ok, err = c:connect(leader, conf.port or M.PORT)
+  if not ok then c:close() return nil, ("cannot reach the main node %s:%s (%s)"):format(leader, conf.port, err) end
   local sent, serr = c:send(json.encode(msg) .. "\n")
   if not sent then c:close() return nil, "send: " .. tostring(serr) end
   local line, rerr = c:receive("*l")
@@ -140,10 +160,10 @@ function M.newLeader(conf)
     while #L.log > 50 do table.remove(L.log) end
   end
 
-  local function nodeName()
+  local function nodeName(prefix)
     local used = {}
     for _, n in pairs(L.nodes) do used[n.name] = true end
-    for i = 1, 999 do if not used["node" .. i] then return "node" .. i end end
+    for i = 1, 999 do if not used[prefix .. i] then return prefix .. i end end
   end
 
   local function online(n) return os.time() - (n.seen or 0) <= M.DEAD_AFTER end
@@ -205,12 +225,12 @@ function M.newLeader(conf)
       if os.time() > L.enrollUntil then
         return { error = "the swarm is not accepting new nodes: run `swarm enroll` on the main node" }
       end
-      n = { name = nodeName(), mac = mac, joined = os.date("%Y-%m-%d %H:%M") }
+      n = { name = nodeName(msg.stats.drone and "drone" or "node"), mac = mac, joined = os.date("%Y-%m-%d %H:%M") }
       L.nodes[mac] = n
       L.note(n.name .. " joined (" .. tostring(msg.stats and msg.stats.ip) .. ")")
       save()
     end
-    n.seen, n.stats, n.ip = os.time(), msg.stats, msg.stats and msg.stats.ip
+    n.seen, n.stats, n.ip, n.via = os.time(), msg.stats, msg.stats and msg.stats.ip, msg.via
     return { ok = true, name = n.name, token = L.conf.token }
   end
 
@@ -225,7 +245,7 @@ function M.newLeader(conf)
       n.rxRate = math.max(0, (msg.stats.rx - n.stats.rx) / dt)
       n.txRate = math.max(0, (msg.stats.tx - n.stats.tx) / dt)
     end
-    n.seen, n.stats, n.ip = now, msg.stats, msg.stats.ip
+    n.seen, n.stats, n.ip, n.via = now, msg.stats, msg.stats.ip, msg.via
     -- results of finished jobs
     for _, r in ipairs(msg.results or {}) do
       local j = L.job(r.id)
@@ -251,7 +271,7 @@ function M.newLeader(conf)
     for _, n in pairs(L.nodes) do
       nodes[#nodes + 1] = { name = n.name, mac = n.mac, ip = n.ip, online = online(n), busy = n.busy,
                             seen = n.seen and (os.time() - n.seen) or nil, stats = n.stats,
-                            rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac }
+                            rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac, via = n.via }
     end
     table.sort(nodes, function(a, b)
       return (tonumber(a.name:match("%d+")) or 0) < (tonumber(b.name:match("%d+")) or 0)
@@ -344,6 +364,45 @@ function M.newLeader(conf)
   return L
 end
 
+---------------------------------------------------------------- drone base
+-- A drone base is a swarm node with network tunnel cards: each tunnel (eth1, eth2, ...) is a private
+-- link to one drone. The base gives each link the subnet 10.43.K.0/24 (it is 10.43.K.1), hands the
+-- drone an address by DHCP, and relays the drone's swarm requests and network install to the main node.
+function M.links()
+  local uplink = M.ip() and "eth0" or nil
+  local out = {}
+  local names = U.capture("ls /sys/class/net 2>/dev/null")
+  local list = {}
+  for n in names:gmatch("%S+") do if n:match("^eth%d+$") then list[#list + 1] = n end end
+  table.sort(list, function(a, b) return tonumber(a:match("%d+")) < tonumber(b:match("%d+")) end)
+  -- the uplink is the interface on the swarm network (10.42.0.x); every other one is a drone link
+  for _, n in ipairs(list) do
+    local addr = U.capture("ip -4 -o addr show " .. n .. " 2>/dev/null"):match("inet (%d+%.%d+%.%d+%.%d+)")
+    if addr and addr:match("^" .. M.SUBNET:gsub("%.", "%%.") .. "%.") then uplink = n end
+  end
+  local k = 0
+  for _, n in ipairs(list) do
+    if n ~= uplink then
+      k = k + 1
+      out[#out + 1] = { iface = n, net = "10.43." .. k, ip = "10.43." .. k .. ".1" }
+    end
+  end
+  return out, uplink
+end
+
+function M.setupBase()
+  local links = M.links()
+  local conf = { "# Shulker drone base: DHCP for the drones on the tunnel links", "port=0", "bind-interfaces",
+                 "dhcp-leasefile=/tmp/base-dnsmasq.leases", "dhcp-authoritative" }
+  for _, l in ipairs(links) do
+    os.execute(("ip link set %s up; ip addr add %s/24 dev %s 2>/dev/null"):format(l.iface, l.ip, l.iface))
+    conf[#conf + 1] = "interface=" .. l.iface
+    conf[#conf + 1] = ("dhcp-range=%s.10,%s.60,255.255.255.0,12h"):format(l.net, l.net)
+  end
+  U.write(U.etcdir() .. "/base-dnsmasq.conf", table.concat(conf, "\n") .. "\n")
+  return links
+end
+
 ---------------------------------------------------------------- services
 -- the DHCP server of the main node: hands out 10.42.0.100-250, the gateway address and a name server
 function M.dnsmasqConf()
@@ -380,17 +439,26 @@ function M.startServices(conf)
     if conf.work == "1" then start("worker") end
   elseif conf.role == "worker" then
     start("worker")
+    if conf.base == "1" then
+      local links = M.setupBase()
+      if #links > 0 and not pidAlive("/tmp/base-dnsmasq.pid") then
+        os.execute("dnsmasq -C " .. U.q(U.etcdir() .. "/base-dnsmasq.conf") .. " -x /tmp/base-dnsmasq.pid 2>> /tmp/swarmd-relay.log")
+      end
+      start("relay")
+    end
   end
 end
 
 function M.stopServices()
-  for _, what in ipairs({ "leader", "worker" }) do
+  for _, what in ipairs({ "leader", "worker", "relay" }) do
     local pid = U.trim(U.read("/tmp/swarmd-" .. what .. ".pid") or "")
     if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
     os.remove("/tmp/swarmd-" .. what .. ".pid")
   end
-  local pid = U.trim(U.read("/tmp/swarm-dnsmasq.pid") or "")
-  if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
+  for _, f in ipairs({ "/tmp/swarm-dnsmasq.pid", "/tmp/base-dnsmasq.pid" }) do
+    local pid = U.trim(U.read(f) or "")
+    if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
+  end
 end
 
 ---------------------------------------------------------------- network install (the main node serves Shulker OS)
@@ -435,7 +503,13 @@ end
 function M.serveHttp(c, leaderIp)
   c:settimeout(3)
   local request = c:receive("*l") or ""
-  repeat local h = c:receive("*l") until not h or h == ""
+  local host
+  repeat
+    local h = c:receive("*l")
+    local v = h and h:match("^[Hh]ost:%s*([%d%.]+)")
+    if v then host = v end
+  until not h or h == ""
+  leaderIp = host or leaderIp
   local path = request:match("^GET%s+(%S+)") or ""
   path = path:gsub("%?.*$", "")
   local body, ctype = nil, "text/plain"
@@ -467,6 +541,11 @@ function M.serveHttp(c, leaderIp)
 end
 
 ---------------------------------------------------------------- formatting
+function M.exitText(rc)
+  rc = tonumber(rc)
+  return rc and tostring(math.floor(rc)) or "?"
+end
+
 function M.age(seconds)
   seconds = tonumber(seconds) or 0
   if seconds < 60 then return seconds .. "s" end

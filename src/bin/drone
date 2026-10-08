@@ -1,0 +1,98 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- drone: control this robot (runs on the drone; the main computer sends it as a job: `swarm drone NAME ...`)
+local U = require("shulker.util")
+local D = require("shulker.drone")
+local json = require("shulker.json")
+local c = U.c
+
+local USAGE = [==[
+usage: drone status [--json]          energy, position, facing, modules
+       drone move forward|back|up|down [N] [--dig]
+       drone turn left|right|around   drone face north|east|south|west
+       drone go X Y Z [--dig]          to a position relative to the start (x east, y up, z south)
+       drone home [--dig]              back to the start, where its charger should be
+       drone dig [front|up|down]      drone place [front|up|down]
+       drone inspect [front|up|down]  drone scan        what the scanner module sees
+       drone calibrate                 make this spot the new start (0 0 0)
+see `man drone`]==]
+
+local a = arg
+local cmd = a[1]
+if not cmd or cmd == "-h" or cmd == "--help" then print(USAGE) os.exit(cmd and 0 or 1) end
+local dig = false
+for i = #a, 1, -1 do if a[i] == "--dig" then dig = true table.remove(a, i) end end
+
+local r, err = D.robot()
+if not r then U.die("drone: " .. tostring(err)) end
+
+local function report()
+  local p = D.position()
+  return p and ("at %d %d %d facing %s"):format(p.x, p.y, p.z, tostring(r.facing())) or ""
+end
+
+if cmd == "status" then
+  local info = D.info()
+  if a[2] == "--json" then print(json.encode(info)) os.exit(0) end
+  print(("energy   %s / %s (%s%%)"):format(tostring(info.energy), tostring(info.capacity), tostring(info.charge)))
+  if info.pos then print(("position %d %d %d (relative to the start), facing %s"):format(info.pos.x, info.pos.y, info.pos.z, tostring(info.facing))) end
+  print("modules  " .. (#info.modules > 0 and table.concat(info.modules, ", ") or "none"))
+elseif cmd == "move" then
+  local map = { forward = "forward", back = "backward", backward = "backward", up = "upward", down = "downward" }
+  local dir = map[a[2] or ""]
+  if not dir then U.die("drone: move forward|back|up|down [N]") end
+  local n = tonumber(a[3] or "1") or 1
+  for i = 1, n do
+    if not D.step(dir, dig) then U.die(("drone: blocked after %d of %d steps, %s"):format(i - 1, n, report())) end
+  end
+  print("ok, " .. report())
+elseif cmd == "turn" then
+  if not D.turn(a[2] or "") then U.die("drone: turn left|right|around") end
+  print("ok, " .. report())
+elseif cmd == "face" then
+  if not D.face(a[2] or "") then U.die("drone: face north|east|south|west") end
+  print("ok, " .. report())
+elseif cmd == "go" or cmd == "home" then
+  local x, y, z = 0, 0, 0
+  if cmd == "go" then
+    x, y, z = tonumber(a[2] or ""), tonumber(a[3] or ""), tonumber(a[4] or "")
+    if not (x and y and z) then U.die("drone: go X Y Z") end
+  end
+  local ok, why = D.go(x, y, z, dig)
+  if not ok then U.die("drone: " .. tostring(why) .. ", " .. report()) end
+  print("arrived, " .. report())
+elseif cmd == "dig" or cmd == "place" then
+  local ops = D.module("block_operations")
+  if not ops then U.die("drone: needs a block operations module") end
+  local ok, res = pcall(cmd == "dig" and ops.excavate or ops.place, ops, a[2] or "front")
+  if not ok or not res then U.die("drone: " .. cmd .. " failed" .. (ok and "" or (": " .. tostring(res)))) end
+  print("ok")
+elseif cmd == "inspect" then
+  local res, why = D.inspect(a[2])
+  if not res then U.die("drone: " .. why) end
+  print(json.encode(res))
+elseif cmd == "scan" then
+  local res, why = D.scan()
+  if not res then U.die("drone: " .. why) end
+  local b = res.bands
+  print(("7x7x7 around %s: air %d, soft %d, stone %d, hard %d (ores and harder)"):format(report(), b.air, b.soft, b.stone, b.hard))
+  if type(res.entities) == "table" and #res.entities > 0 then print("entities: " .. table.concat(res.entities, ", ")) end
+elseif cmd == "calibrate" then
+  r.calibrate()
+  print("this spot is now 0 0 0")
+else
+  U.die("drone: unknown command " .. cmd .. "\n" .. USAGE)
+end
