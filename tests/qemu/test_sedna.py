@@ -33,6 +33,11 @@ def check(cond, what, out=""):
             print("        " + out.strip().replace("\n", "\n        ")[:2000])
 
 
+def used_kb(df):
+    m = re.search(r"/dev/root\s+\d+\s+(\d+)", df)
+    return int(m.group(1)) if m else 0
+
+
 def plain(s):
     return ANSI.sub("", s)
 
@@ -146,12 +151,12 @@ def common(vm, mode):
 def install_mode(args):
     with Sedna(args.rootfs, args.kernel, builtin=args.builtin, log=args.log) as vm:
         vm.sh("ip addr add 10.0.2.15/24 dev eth0; ip link set eth0 up; ip route add default via 10.0.2.2")
-        rc, df_before = vm.run("df -k / | tail -n 1")
+        rc, df_before = vm.run("busybox df -k / | tail -n 1")
         rc, out = vm.run("wget -qO- https://10.0.2.2:8443/files/dev/install.sh | "
                          "SHULKER_REPO=https://10.0.2.2:8443/files SHULKER_BRANCH=dev sh", timeout=600)
         check(rc == 0 and "is installed" in plain(out), "one-line installer", out)
-        rc, df_after = vm.run("df -k / | tail -n 1")
-        used = int(df_after.split()[2]) - int(df_before.split()[2])
+        rc, df_after = vm.run("busybox df -k / | tail -n 1")
+        used = used_kb(df_after) - used_kb(df_before)
         print("  ..    installer used %d KB of the root disk" % used)
         check(used < 400, "install is small (%d KB)" % used)
         vm.send("exec sh -l")     # a login shell picks up /etc/profile.d/shulker.sh
@@ -201,31 +206,43 @@ def install_mode(args):
 
 def datapack_mode(args):
     with Sedna(args.rootfs, args.kernel, builtin=args.builtin, log=args.log) as vm:
-        rc, df_before = vm.run("df -k / | tail -n 1")
+        rc, df_before = vm.run("busybox df -k / | tail -n 1")
         vm.send("exec sh -l")
         vm.raw_shell()
         rc, out = vm.run("command -v claude task shulker")
-        check(rc == 0 and "/mnt/builtin/bin/claude" in out, "commands on the PATH from the data pack layer", out)
+        check(rc == 0 and "/mnt/builtin/" in out, "commands on the PATH from the data pack layer", out)
         network(vm)
         common(vm, "datapack")
         rc, out = vm.run("shulker update")
         check(rc != 0 and "data pack" in out, "update refuses on the read-only data pack", out)
-        rc, df_after = vm.run("df -k / | tail -n 1")
-        used = int(df_after.split()[2]) - int(df_before.split()[2])
+        rc, df_after = vm.run("busybox df -k / | tail -n 1")
+        used = used_kb(df_after) - used_kb(df_before)
         print("  ..    data pack mode used %d KB of the root disk" % used)
+
+
+def hdd_mode(args):
+    # the preloaded "Shulker OS" hard drive from the data pack: booted as the root disk
+    with Sedna(args.rootfs, args.kernel, builtin=args.builtin, log=args.log) as vm:
+        vm.send("exec sh -l")
+        vm.raw_shell()
+        rc, out = vm.run("command -v claude; cat /opt/shulker/VERSION; pidof crond")
+        check(rc == 0 and "/opt/shulker/bin/claude" in out, "HDD image boots with Shulker OS in /opt/shulker and crond running", out)
+        network(vm)
+        common(vm, "install")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sedna", default="work/sedna")
     ap.add_argument("--builtin", required=True)
-    ap.add_argument("--mode", choices=["install", "datapack"], default="install")
+    ap.add_argument("--mode", choices=["install", "datapack", "hdd"], default="install")
     ap.add_argument("--log")
+    ap.add_argument("--rootfs", help="boot this disk image instead of SEDNA/rootfs.ext2 (hdd mode)")
     args = ap.parse_args()
-    args.rootfs = os.path.join(args.sedna, "rootfs.ext2")
+    args.rootfs = args.rootfs or os.path.join(args.sedna, "rootfs.ext2")
     args.kernel = os.path.join(args.sedna, "Image")
     print("Shulker OS on Sedna (QEMU), %s mode" % args.mode, flush=True)
-    (install_mode if args.mode == "install" else datapack_mode)(args)
+    {"install": install_mode, "datapack": datapack_mode, "hdd": hdd_mode}[args.mode](args)
     print("\n%d failure(s)" % len(FAILS))
     for f in FAILS:
         print("  - " + f)

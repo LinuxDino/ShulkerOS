@@ -15,6 +15,11 @@ version=$(cat src/VERSION)
 	done)
 } > manifest.txt
 
+# everything in one download for the installer (one TLS handshake instead of one per file, which
+# matters on OC2's emulated CPU); deterministic so CI can check it is current. The installer still
+# checks every file in it against manifest.txt.
+tar --format=ustar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf bundle.tar -C src .
+
 : > packages/index.txt
 while read -r name pver desc; do
 	[ -d "packages/$name" ] || { echo "no packages/$name" >&2; exit 1; }
@@ -27,4 +32,4 @@ while read -r name pver desc; do
 		done)
 	} > "packages/$name/PKG"
 done < packages/descriptions.txt
-echo "manifest.txt: $(($(wc -l < manifest.txt) - 1)) files, $(awk 'NR > 1 {s += $2} END {print s}' manifest.txt) bytes; $(wc -l < packages/index.txt) packages"
+echo "bundle.tar: $(du -k bundle.tar | cut -f1) KB; manifest.txt: $(($(wc -l < manifest.txt) - 1)) files, $(awk 'NR > 1 {s += $2} END {print s}' manifest.txt) bytes; $(wc -l < packages/index.txt) packages"

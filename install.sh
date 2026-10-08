@@ -36,7 +36,7 @@ done
 say "Installing ${L}Shulker OS${N} from $BASE"
 
 mkdir -p "$STAGE" || die "cannot create $STAGE"
-wget -q -T 30 -O "$STAGE/manifest.txt" "$BASE/manifest.txt" ||
+wget -q -T 30 -O "$STAGE/manifest.txt" "$BASE/manifest.txt" 2>"$STAGE/wget.err" ||
 	die "could not download $BASE/manifest.txt. Is the network up? (netcfg auto; netcfg test)"
 version=$(awk '$1 == "version" {print $2; exit}' "$STAGE/manifest.txt")
 count=$(awk 'NF == 3 && length($1) == 64' "$STAGE/manifest.txt" | wc -l)
@@ -50,22 +50,38 @@ free=$(df -k "$target" | awk 'NR > 1 {v = $(NF - 2)} END {print v + 0}')
 [ "$free" -ge "$need" ] || die "not enough disk space on $target: need $need KB, $free KB free"
 say "version $version: $count files, $((bytes / 1024)) KB ($free KB free)"
 
-i=0
 awk 'NF == 3 && length($1) == 64' "$STAGE/manifest.txt" > "$STAGE/files"
+mkdir -p "$STAGE/src"
+# one download with everything (fast on OC2's slow CPU); any file that is missing from it or
+# doesn't match the manifest is fetched on its own below
+if wget -q -T 60 -O "$STAGE/bundle.tar" "$BASE/bundle.tar" 2>"$STAGE/wget.err" &&
+	tar -xf "$STAGE/bundle.tar" -C "$STAGE/src" 2>/dev/null; then
+	say "downloaded the bundle, checking every file"
+fi
+rm -f "$STAGE/bundle.tar"
+i=0
 while read -r sum size path; do
 	i=$((i + 1))
 	case "$path" in /*|*..*) die "unsafe path in manifest: $path" ;; esac
 	[ -t 1 ] && printf '\r   %d/%d %s\033[K' "$i" "$count" "$path"
+	if [ -f "$STAGE/src/$path" ] && [ "$(sha256sum "$STAGE/src/$path" | cut -d' ' -f1)" = "$sum" ]; then
+		continue
+	fi
 	mkdir -p "$STAGE/src/$(dirname "$path")"
 	ok=0
 	for try in 1 2 3; do
-		if wget -q -T 30 -O "$STAGE/src/$path" "$BASE/src/$path"; then ok=1; break; fi
+		# BusyBox wget notes on every HTTPS download that it can't verify certificates: keep quiet
+		if wget -q -T 30 -O "$STAGE/src/$path" "$BASE/src/$path" 2>"$STAGE/wget.err"; then ok=1; break; fi
 		sleep $try
 	done
-	[ $ok = 1 ] || die "download failed: $path"
+	[ $ok = 1 ] || die "download failed: $path ($(grep -v 'certificate validation' "$STAGE/wget.err" | head -n 1))"
 	got=$(sha256sum "$STAGE/src/$path" | cut -d' ' -f1)
 	[ "$got" = "$sum" ] || die "checksum mismatch for $path (the download was damaged; try again)"
 done < "$STAGE/files"
+# only what the manifest lists gets installed
+(cd "$STAGE/src" && find . -type f | sed 's|^\./||') | while read -r f; do
+	grep -q " $f\$" "$STAGE/files" || rm -f "$STAGE/src/$f"
+done
 [ -t 1 ] && printf '\r\033[K'
 say "all files downloaded and verified"
 

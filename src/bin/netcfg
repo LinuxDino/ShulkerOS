@@ -101,7 +101,10 @@ nettest() {
 	r=$(ip route | awk '/^default/ {print $3; exit}')
 	check "eth0 has an address" "ip -4 addr show $IF | grep -q inet" "netcfg auto"
 	check "default route${r:+ via $r}" "[ -n '$r' ]" "netcfg auto"
-	[ -n "$r" ] && check "gateway answers ping" "ping -c 1 -W 3 $r" "Internet Gateway placed, powered and on the same network connector?"
+	if [ -n "$r" ]; then
+		if ping -c 1 -W 3 "$r" >/dev/null 2>&1; then echo "  ${G}ok${N}    $r answers ping"
+		else echo "  ${D}info  $r doesn't answer ping (normal for an OC2 Internet Gateway)${N}"; fi
+	fi
 	check "DNS resolves github.com" "nslookup raw.githubusercontent.com" "name server in /etc/resolv.conf"
 	check "Anthropic API reachable (160.79.104.10:443)" "nc -z -w 8 160.79.104.10 443" "the server may block it"
 	check "HTTPS to GitHub (wget)" "wget -q -T 15 -O /dev/null https://raw.githubusercontent.com/LinuxDino/ShulkerOS/main/README.md"

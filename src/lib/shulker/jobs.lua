@@ -251,12 +251,17 @@ function M.tail(id, lines)
   return table.concat(out, "\n")
 end
 
+function M.exitText(code)
+  code = tonumber(code)
+  return code and tostring(math.floor(code)) or "?"
+end
+
 function M.plain(list)
   if #list == 0 then return "(no scheduled jobs)" end
   local out = {}
   for _, j in ipairs(list) do
     out[#out + 1] = ("%s  %-22s %-6s %s%s"):format(j.id, j.when or j.schedule, j.kind,
-      j.name, j.last_run and ("  (last run " .. j.last_run .. ", exit " .. tostring(j.last_exit) .. ")") or "")
+      j.name, j.last_run and ("  (last run " .. j.last_run .. ", exit " .. M.exitText(j.last_exit) .. ")") or "")
   end
   return table.concat(out, "\n")
 end

@@ -47,6 +47,7 @@ function M.fetch(url, dest)
   local out, code = U.capture(("wget -q -T 30 -O %s %s"):format(U.q(dest), U.q(url)))
   if code ~= 0 then
     os.remove(dest)
+    out = out:gsub("wget: note: TLS certificate validation not implemented\n?", "")
     return nil, ("download failed: %s %s"):format(url, U.trim(out))
   end
   return true

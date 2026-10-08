@@ -1,11 +1,10 @@
 # Shulker OS login shell setup (installed as /etc/profile.d/shulker.sh; refreshed at every boot).
 # Edit /etc/shulker/profile.local for your own additions: this file is replaced on update.
 
-if [ -z "$SHULKER_HOME" ]; then
-	for d in /opt/shulker /mnt/builtin/shulker; do
-		if [ -f "$d/lib/shulker/util.lua" ]; then SHULKER_HOME="$d"; break; fi
-	done
-fi
+# a copy on the disk (/opt/shulker, kept current by `shulker update`) wins over the data pack's
+for d in /opt/shulker /mnt/builtin/shulker; do
+	if [ -f "$d/lib/shulker/util.lua" ]; then SHULKER_HOME="$d"; break; fi
+done
 export SHULKER_HOME
 
 case ":$PATH:" in *":$SHULKER_HOME/bin:"*) ;; *) PATH="$SHULKER_HOME/bin:$PATH" ;; esac

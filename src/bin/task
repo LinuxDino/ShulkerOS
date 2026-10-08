@@ -45,6 +45,7 @@ end
 ---------------------------------------------------------------- interactive list (plain ANSI, no curses)
 local function tui()
   local sel, msg = 1, "a add  space done  p priority  e edit  d delete  A archive  q quit"
+  local follow                               -- task id to keep selected after the list re-sorts
   local function key()
     local k = io.read(1)
     if k == "\27" then
@@ -70,10 +71,14 @@ local function tui()
   local ok, e = pcall(function()
     while true do
       local list = tasks.select("all")
+      if follow then
+        for i, t in ipairs(list) do if t.id == follow then sel = i end end
+        follow = nil
+      end
       if sel > #list then sel = #list end
       if sel < 1 then sel = 1 end
       io.write("\27[H\27[2J")
-      io.write(c("accent", " ▄▄▄ ") .. c("bold", "Tasks") .. c("dim", "  " .. tasks.path()) .. "\n\n")
+      io.write(c("soft", " \27(0aaa\27(B ") .. c("bold", "Tasks") .. c("dim", "  " .. tasks.path()) .. "\n\n")
       local rows = 18
       local top = math.max(1, sel - rows + 1)
       if #list == 0 then io.write(c("dim", "  (empty: press a to add a task)\n")) end
@@ -94,15 +99,19 @@ local function tui()
         if s and s:match("%S") then
           local nt, err = tasks.add(s)
           msg = nt and ("added #" .. nt.id) or err
+          if nt then follow = nt.id end
         end
       elseif t and (k == " " or k == "x") then
         tasks.update(t.id, { done = not t.done })
+        follow = t.id
       elseif t and k == "p" then
         local nextP = ({ A = "medium", B = "low", C = "none" })[t.pri or ""] or "high"
         tasks.update(t.id, { pri = nextP })
+        follow = t.id
       elseif t and k == "e" then
         local s = prompt("\27[23;1H\27[2Kedit #" .. t.id .. " (empty keeps it): ")
         if s and s:match("%S") then tasks.update(t.id, { text = s }) end
+        follow = t.id
       elseif t and k == "d" then
         local s = prompt("\27[23;1H\27[2Kdelete #" .. t.id .. "? [y/N] ")
         if s and s:lower():match("^y") then tasks.remove(t.id) end
@@ -125,7 +134,7 @@ local function jobCmd(a)
     for _, j in ipairs(list) do
       print(("%s  %s  %s %s%s"):format(c("accent", j.id), c("soft", ("%-20s"):format(j.when or j.schedule)),
         c(j.kind == "claude" and "info" or "dim", ("%-6s"):format(j.kind)), j.name,
-        j.last_run and c("dim", ("  last %s exit %s"):format(j.last_run, tostring(j.last_exit))) or ""))
+        j.last_run and c("dim", ("  last %s exit %s"):format(j.last_run, jobs.exitText(j.last_exit))) or ""))
     end
     print(c("dim", (jobs.crondRunning() and "crond is running" or "crond is NOT running (it starts at boot; `task job` restarts it)") ..
       ", times are " .. os.date("%Z") .. ", now " .. os.date("%H:%M")))

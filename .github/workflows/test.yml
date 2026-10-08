@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update -q && sudo apt-get install -y -q lua5.4
+      - name: Syntax, manifests, unit tests
+        run: tests/run.sh
+
+  sedna:
+    # boots the real Sedna Linux (kernel + rootfs from OC2's sedna-buildroot) in QEMU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU and tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q lua5.4 qemu-system-misc e2fsprogs zip openssl python3-pexpect
+      - name: Installer, data pack layer and HDD image on Sedna
+        run: tests/run.sh --qemu
+      - name: Data pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShulkerOS-datapack
+          path: dist/ShulkerOS-datapack-*.zip
+          retention-days: 14
+      - name: VM logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-logs
+          path: work/*.log

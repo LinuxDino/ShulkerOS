@@ -161,7 +161,7 @@ local RUN = {}
 function RUN.run_command(i)
   local t = math.min(math.max(num(i.timeout_seconds, 60), 1), 600)
   local out, code = U.capture(("timeout %d sh -c %s </dev/null"):format(t, U.q(i.command)))
-  if code == 143 then out = out .. ("\n(stopped after %d s)"):format(t) end
+  if code == 143 or code == 124 then out = out .. ("\n(stopped after %d s)"):format(t) end
   return ("exit code %d\n%s"):format(code, U.clip(out, MAX_OUT)), false
 end
 
