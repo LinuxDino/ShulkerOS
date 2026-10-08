@@ -1,0 +1,186 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local d = (arg and arg[0] or ""):match("^(.*)/bin/[^/]+$")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+local U = require("shulker.util")
+local api = require("shulker.api")
+local json = require("shulker.json")
+local c = U.c
+
+local USAGE = [==[
+usage: claude                      chat in the terminal
+       claude -p "prompt"          one reply, then exit (stdin is added when piped)
+       claude -c                   continue the last conversation
+       claude key [--forget]       set (or delete) the Anthropic API key
+       claude config [KEY [VALUE]] show or change options (model, effort, thinking, auto, ...)
+       claude doctor               check the key, network and connection to the API
+options: -m opus|sonnet|ID   -e low|medium|high|xhigh|max   --auto (no permission prompts)
+         --allow tool,tool   pre-approve risky tools (for -p and scheduled jobs)
+see `man claude`]==]
+
+local args, opts = {}, { allow = {} }
+local i = 1
+while i <= #arg do
+  local a = arg[i]
+  local function nextArg()
+    i = i + 1
+    if arg[i] == nil then U.die("claude: " .. a .. " needs a value") end
+    return arg[i]
+  end
+  if a == "-p" or a == "--print" then opts.print = true
+    if arg[i + 1] and arg[i + 1]:sub(1, 1) ~= "-" then opts.prompt = nextArg() end
+  elseif a == "-c" or a == "--continue" then opts.continue = true
+  elseif a == "-m" or a == "--model" then opts.model = nextArg()
+  elseif a == "-e" or a == "--effort" then opts.effort = nextArg()
+  elseif a == "--auto" or a == "--yes" then opts.auto = true
+  elseif a == "--allow" then for t in nextArg():gmatch("[^,%s]+") do opts.allow[t] = true end
+  elseif a == "--job" then opts.job = nextArg()
+  elseif a == "-h" or a == "--help" then print(USAGE) os.exit(0)
+  elseif a == "-v" or a == "--version" then print("claude (Shulker OS " .. U.VERSION .. ")") os.exit(0)
+  else args[#args + 1] = a end
+  i = i + 1
+end
+
+local cfg = api.loadConfig()
+local function apply(k, v)
+  if v == nil then return end
+  local ok, e = api.setOption(cfg, k, v)
+  if not ok then U.die("claude: " .. e) end
+end
+apply("model", opts.model)
+apply("effort", opts.effort)
+if opts.auto then cfg.auto = true end
+
+---------------------------------------------------------------- subcommands
+local sub = args[1]
+if sub == "key" then
+  if args[2] == "--forget" or args[2] == "forget" then
+    api.forgetKey()
+    print("API key deleted from " .. api.keyPath())
+    os.exit(0)
+  end
+  local chat = require("shulker.chat")
+  local ok, e = chat.askKey()
+  if not ok then U.die("claude: " .. e) end
+  os.exit(0)
+elseif sub == "config" then
+  local k, v = args[2], args[3]
+  if not k then
+    for _, name in ipairs({ "model", "effort", "thinking", "auto", "max_tokens", "idle_timeout", "retries", "api_url", "pin" }) do
+      print(("%-13s %s"):format(name, tostring(cfg[name])))
+    end
+    local key, src = api.getKey()
+    print(("%-13s %s"):format("key", key and ("set (" .. (src == "env" and "ANTHROPIC_API_KEY" or api.keyPath()) .. ")") or "not set"))
+    os.exit(0)
+  end
+  if v == nil then print(tostring(cfg[k])) os.exit(cfg[k] == nil and 1 or 0) end
+  local saved = api.loadConfig()
+  local ok, e = api.setOption(saved, k, v)
+  if not ok then U.die("claude: " .. e) end
+  api.saveConfig(saved)
+  print(("%s = %s"):format(k, tostring(saved[k])))
+  if k == "pin" and saved.pin == false then
+    print(c("warn", "Address pinning is off: DNS answers for api.anthropic.com are trusted as they are."))
+  end
+  os.exit(0)
+elseif sub == "doctor" then
+  local http = require("shulker.http")
+  local function line(ok, text) print((ok and c("ok", " ok ") or c("err", "FAIL")) .. "  " .. text) end
+  local key, src = api.getKey()
+  line(key ~= nil, key and ("API key set (" .. (src == "env" and "ANTHROPIC_API_KEY" or api.keyPath()) .. ")") or "no API key: run `claude key`")
+  if src == "file" then
+    local mode = U.trim((U.capture("stat -c %a " .. U.q(api.keyPath()))))
+    line(mode == "600", "key file mode " .. mode .. (mode == "600" and "" or " (should be 600: chmod 600 " .. api.keyPath() .. ")"))
+  end
+  line(http.posix ~= nil, http.posix and "luaposix found: raw HTTPS through ssl_client (streaming)" or "no luaposix: falling back to wget")
+  line(U.which("ssl_client") ~= nil, "BusyBox ssl_client " .. (U.which("ssl_client") and "present" or "missing"))
+  local route = U.capture("ip route | awk '/^default/ {print $3; exit}'")
+  route = U.trim(route)
+  line(route ~= "", route ~= "" and ("default gateway " .. route) or "no default route: set up the network with `netcfg`")
+  local u = http.parseurl(cfg.api_url)
+  local ips, rerr = http.resolve(u.host)
+  if ips then
+    local pinned = http.inCidr(ips[1], api.PIN_CIDR)
+    line(u.host ~= "api.anthropic.com" or pinned, ("DNS %s -> %s%s"):format(u.host, table.concat(ips, ", "),
+      u.host == "api.anthropic.com" and (pinned and " (inside Anthropic's range " .. api.PIN_CIDR .. ")" or " (OUTSIDE Anthropic's published range!)") or ""))
+  else
+    print(c("warn", "warn") .. "  " .. tostring(rerr) .. (u.host == "api.anthropic.com" and " (fine: the pinned address " .. api.PIN_FALLBACK_IP .. " is used)" or ""))
+  end
+  local target = api.target(cfg, function(w) print(c("warn", "warn") .. "  " .. w) end) or (ips and ips[1])
+  io.write(c("dim", "....") .. "  connecting to " .. tostring(target or u.host) .. ":" .. u.port .. " ...")
+  io.flush()
+  local t0 = os.time()
+  local res, e = http.request({ url = u.scheme .. "://" .. u.host .. ":" .. u.port .. "/v1/models", ip = target, sni = u.host,
+    headers = { ["x-api-key"] = key or "none", ["anthropic-version"] = "2023-06-01" }, idle_timeout = 60 })
+  io.write("\r")
+  if res then
+    local d = json.decode(res.body or "")
+    local okKey = res.status == 200
+    line(true, ("TLS connection to %s works (%ds)"):format(u.host, os.time() - t0))
+    line(okKey, okKey and "the API accepted the key" or ("the API answered HTTP " .. res.status ..
+      (type(d) == "table" and type(d.error) == "table" and (": " .. tostring(d.error.message)) or "")))
+  else
+    line(false, "could not reach " .. u.host .. ": " .. tostring(e))
+  end
+  print(c("warn", "note") .. "  certificates are not verified on Sedna Linux (see `man claude`, SECURITY)")
+  os.exit(0)
+elseif sub and not opts.print then
+  -- `claude some words` is a one-shot prompt too
+  opts.print = true
+  opts.prompt = table.concat(args, " ")
+end
+
+---------------------------------------------------------------- chat
+local chat = require("shulker.chat")
+local tty = U.isatty(0)
+
+if not api.getKey() then
+  if opts.print or not tty then U.die("claude: no API key. Run `claude key` first (or set ANTHROPIC_API_KEY).") end
+  local ok, e = chat.askKey()
+  if not ok then U.die("claude: " .. e) end
+  cfg = api.loadConfig()
+  apply("model", opts.model) apply("effort", opts.effort)
+  if opts.auto then cfg.auto = true end
+end
+
+if opts.print then
+  local prompt = opts.prompt or ""
+  if not tty then
+    local piped = io.read("a") or ""
+    if piped:match("%S") then prompt = (prompt ~= "" and (prompt .. "\n\n") or "") .. U.clip(piped, 60000) end
+  end
+  if not prompt:match("%S") then U.die("claude: -p needs a prompt") end
+  local S = chat.new({ cfg = cfg, allow = opts.allow, quiet = true, interactive = (not opts.job) and U.isatty(2) })
+  if opts.job then
+    S.system = S.system .. "\n\nYou are running as scheduled job " .. opts.job ..
+      " without the user present. Your final reply is saved to the job's log. Do the job, then reply with a short report."
+  end
+  if opts.continue then S:load() end
+  local text, e = S:turn(prompt)
+  if not text then io.stderr:write("claude: " .. tostring(e) .. "\n") os.exit(1) end
+  if not text:match("\n$") then io.write("\n") end
+  os.exit(0)
+end
+
+local S = chat.new({ cfg = cfg, allow = opts.allow })
+if opts.continue then S:load() end
+if not cfg.tls_ack then
+  print(c("warn", chat.TLS_WARNING))
+  print()
+  local ans = chat.ttyRead("Type yes to continue: ")
+  if not ans or U.trim(ans):lower() ~= "yes" then os.exit(1) end
+  local saved = api.loadConfig()
+  saved.tls_ack = true
+  api.saveConfig(saved)
+end
+S:repl()
