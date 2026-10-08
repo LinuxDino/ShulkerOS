@@ -187,7 +187,7 @@ def install_mode(args):
         vm.stop()
         # second boot on the same disk: everything must still be there
         vm.copy = False
-        vm.rootfs = args.rootfs + ".run"
+        vm.rootfs = vm.disk
         vm.start(login=False)
         out = vm.expect(r"(?m)^\r*[\w-]+ login: ", timeout=180)
         check("Shulker OS" in plain(out), "boot banner and /etc/issue are branded", out[-1500:])

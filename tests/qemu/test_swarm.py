@@ -104,7 +104,7 @@ def main():
         m.sh("sync")
         m.stop()
         m.copy = False
-        m.rootfs = main_img + ".525400000001.run"
+        m.rootfs = m.disk
         m.start()
         seen = 0
         for _ in range(40):

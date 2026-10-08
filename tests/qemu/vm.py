@@ -38,6 +38,7 @@ class Sedna:
         if self.copy:
             disk = self.rootfs + "." + (self.mac or "x").replace(":", "") + ".run"
             shutil.copyfile(self.rootfs, disk)
+        self.disk = disk
         net = "user,id=n0"
         if self.hostfwd:
             net += "," + self.hostfwd
