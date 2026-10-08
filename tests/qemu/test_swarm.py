@@ -83,6 +83,8 @@ def main():
         rc, out = m.run("swarm run 'echo hi from $(hostname)'", timeout=180)
         check(rc == 0 and len(re.findall(r"hi from", out)) == want, "swarm run on every node", out)
 
+        rc, out = m.run("swarm run --on all 'shulker version | head -1; echo job-dir-$(ls -d /tmp/swarm-job-* | head -1)'", timeout=180)
+        check(rc == 0 and out.count("Shulker OS") >= want and not re.search(r"swarm-job-\d+\.0", out), "jobs find shulker on the PATH, integer job ids", out)
         rc, out = m.run("swarm map 'expr {} \\* {}' 1 2 3 4 5 6 7 8 2>/dev/null", timeout=240)
         nums = [int(x) for x in re.findall(r"^\d+$", ANSI.sub("", out).replace("\r", "\n"), re.M)]
         check(rc == 0 and nums == [1, 4, 9, 16, 25, 36, 49, 64], "swarm map spreads work and keeps the order", out)
