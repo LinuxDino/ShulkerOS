@@ -75,8 +75,8 @@ Another branch: `... | sh -s -- --branch NAME`.
 
 ### Without internet (data pack)
 
-Build it with `tools/build-datapack.sh` (or download the `ShulkerOS-datapack` artifact of the latest CI run) and put
-`ShulkerOS-datapack-<version>.zip` into your world's `datapacks` folder (singleplayer: `saves/<world>/datapacks`,
+Download the current one, [datapack/ShulkerOS-datapack.zip](https://github.com/LinuxDino/ShulkerOS/raw/main/datapack/ShulkerOS-datapack.zip)
+(or build it with `tools/build-datapack.sh`), and put it into your world's `datapacks` folder (singleplayer: `saves/<world>/datapacks`,
 server: `world/datapacks`) and restart the world or server. It contains:
 
 - a **file system layer**: OC2 mounts it at `/mnt/builtin` on every Linux computer, so `claude`, `task`, `shulker`
