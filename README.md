@@ -86,6 +86,18 @@ server: `world/datapacks`) and restart the world or server. It contains:
   installed in `/opt/shulker`, updatable with `shulker update`
 - a **"Shulker Swarm Node"** drive (magenta): the same, set up as a swarm worker that joins the main computer at
   10.42.0.1 by itself, and a **"Shulker Drone"** drive (cyan) for robots
+- **crafting recipes** for these drives (shapeless, the CPU stays in the grid like OC2's own Linux drive recipe), so
+  100 drones need no disk maker; an autocrafter (AE2, Refined Storage, the vanilla crafter) makes them in bulk:
+
+  | drive | ingredients |
+  |---|---|
+  | Shulker Drone | large hard drive + RISC-V CPU + cyan dye |
+  | Shulker Swarm Node | large hard drive + RISC-V CPU + magenta dye |
+  | Shulker OS | large hard drive + RISC-V CPU + purple dye |
+  | Shulker Linux | large hard drive + RISC-V CPU + blue dye |
+
+  Crafting a used drive this way wipes it. The drives carry the Shulker OS of the data pack; the main brings each
+  one up to date when it joins
 
 `tools/build-datapack.sh --no-hdd` builds only the layer. The drive image contains Sedna's root file system (BusyBox, musl, Lua and more, under
 the GPL and other licenses listed in the `licenses/` folder of OC2's sedna-buildroot jar), so redistributing that

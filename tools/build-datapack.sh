@@ -9,6 +9,7 @@
 #                                                           a "Shulker OS" hard drive: Sedna with Shulker
 #                                                           OS preinstalled in /opt/shulker
 #     .../shulkeros-node.bin, shulkeros-drone.bin, shulkerlinux.bin (when linux/dist has an image)
+#     data/shulkeros/recipe/*.json      crafting: large hard drive + RISC-V CPU (kept) + dye = that drive
 #
 #   tools/build-datapack.sh [--no-hdd] [--sedna DIR] [--layer-dir DIR]
 #     --no-hdd      only the file system layer (small; no Sedna binaries redistributed)
@@ -127,6 +128,38 @@ DRONECMDS
 		gunzip -c linux/dist/rootfs.ext2.gz > "$(dirname "$IMG")/shulkerlinux.bin"
 		echo '{ "name": "Shulker Linux", "color": "blue" }' > "$(dirname "$IMG")/shulkerlinux.json"
 	fi
+	# crafting: large hard drive + RISC-V CPU (kept, like OC2's own Linux drive recipe) + dye = a preloaded drive,
+	# so drives for many drones or nodes come from a crafting table or an autocrafter, not one by one
+	R="$B/pack/data/shulkeros/recipe"
+	mkdir -p "$R"
+	recipe() { # NAME IMAGE DYE COLOR (the dye's tint, as OC2's creative tab shows these drives)
+		cat > "$R/$1.json" <<RECIPE
+{
+  "type": "oc2:tool",
+  "category": "misc",
+  "ingredients": [
+    "oc2:hard_drive_large",
+    "oc2:cpu_riscv",
+    "minecraft:$3"
+  ],
+  "result": {
+    "components": {
+      "minecraft:dyed_color": $4,
+      "minecraft:custom_data": {
+        "oc2": {
+          "image": "shulkeros:block_devices/hdd/$2.bin"
+        }
+      }
+    },
+    "id": "oc2:hard_drive_large"
+  }
+}
+RECIPE
+	}
+	recipe shulkeros_drive shulkeros purple_dye 8991416
+	recipe swarm_node_drive shulkeros-node magenta_dye 13061821
+	recipe drone_drive shulkeros-drone cyan_dye 1481884
+	[ -f "$(dirname "$IMG")/shulkerlinux.bin" ] && recipe shulkerlinux_drive shulkerlinux blue_dye 3949738
 	free=$(debugfs -R stats "$IMG" 2>/dev/null | awk -F: '/^Free blocks/ {gsub(/ /, "", $2); print $2}')
 	echo "hdd image: $(du -k "$IMG" | cut -f1) KB, $free KB free inside"
 fi

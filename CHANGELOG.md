@@ -2,6 +2,8 @@
 
 ## 1.0.0
 
+- Data pack: crafting recipes for the Shulker Drone, Swarm Node, Shulker OS and Shulker Linux drives (large hard
+  drive + RISC-V CPU + dye), so drives for many drones come from a crafting table or an autocrafter
 - Control Center (`control`): computers, drones, orders with progress, energy and alarms, command bar
 - Orders split over the swarm: `mine` (drones, slices, charging, take-over), `home`, `go`, `run`, `map`, `stop`
 - Storage from any mod: `storage`, `storage find`, `swarm find`, `swarm devices`; monitor sensors `fluid.N`,
