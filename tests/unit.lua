@@ -523,6 +523,19 @@ test("clear: chunk coordinates, campaign pieces, ownership, retries, restart", f
   eq(L2.handle({ op = "heartbeat", token = "t", stats = dr("d2") }).job, nil, "a stopped campaign hands out nothing")
   eq(L2.handle({ op = "orders", token = "t" }).orders[1].state, "stopped")
   os.remove(U.etcdir() .. "/swarm-campaigns.json")
+
+  -- an order started with one drone: drones added later join the work
+  local L3 = S.newLeader({ token = "t" })
+  L3.enrollUntil = os.time() + 60
+  L3.handle({ op = "join", stats = dr("e1") })
+  L3.handle({ op = "order", token = "t", label = "grow", campaign = { x1 = 0, z1 = 0, x2 = 47, z2 = 15, top = 70, bottom = 62 } })
+  local a1 = L3.handle({ op = "heartbeat", token = "t", stats = dr("e1") })
+  eq(a1.job.cmd, "drone clear 0 70 0 15 62 15")
+  L3.handle({ op = "join", stats = dr("e2") })
+  L3.handle({ op = "join", stats = dr("e3") })
+  eq(L3.handle({ op = "heartbeat", token = "t", stats = dr("e2") }).job.cmd, "drone clear 16 70 0 31 62 15", "a newly added drone joins")
+  eq(L3.handle({ op = "heartbeat", token = "t", stats = dr("e3") }).job.cmd, "drone clear 32 70 0 47 62 15", "and the next one too")
+  os.remove(U.etcdir() .. "/swarm-campaigns.json")
 end)
 
 -- a simulated OC2 robot: world of blocks, 12 slots, pickaxe wear, trash can, the module APIs drone.lua uses

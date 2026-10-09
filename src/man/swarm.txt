@@ -6,7 +6,7 @@ SYNOPSIS
   swarm status
   swarm run [--on NODE] COMMAND  swarm submit COMMAND   swarm map 'COMMAND {}' ITEM...
   swarm jobs | result ID | wait ID... | cancel ID|--all
-  swarm enroll [MINUTES] | forget NODE | bench | log | leave
+  swarm enroll [MINUTES|always|off] | forget NODE | bench | log | leave
 
 WHAT IT IS
   One main computer and any number of workers on one in-game network. OC2 runs
@@ -30,7 +30,9 @@ BUILDING ONE (10 workers + 1 main)
      (add --work if the main computer should run jobs too)
   2. Power on the workers. They get an address from the main computer, join,
      and are named node2, node3, ...  New nodes are accepted for 30 minutes
-     after `swarm init`; `swarm enroll` opens the window again.
+     after `swarm init`; `swarm enroll` opens the window again,
+     `swarm enroll always` keeps it open (a fleet that keeps growing),
+     `swarm enroll off` closes it. The setting survives restarts.
   3. swarm status  shows every node with load, memory, disk and uptime.
 
   Workers without the Swarm Node drive (plain Sedna, no internet needed): log

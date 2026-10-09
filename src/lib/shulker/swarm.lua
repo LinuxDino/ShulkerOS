@@ -250,11 +250,14 @@ function M.newLeader(conf)
     local nodes = {}
     for _, n in pairs(L.nodes) do nodes[#nodes + 1] = { name = n.name, mac = n.mac, joined = n.joined } end
     U.write(statePath, json.encode({ nodes = json.array(nodes), enrollUntil = L.enrollUntil }))
+    -- the join window survives restarts of the main (swarm enroll always)
+    U.write(U.etcdir() .. "/swarm-enroll", tostring(math.floor(L.enrollUntil)) .. "\n", "600")
     -- the node list must survive reboots of the main node: keep it next to the config
     U.write(U.etcdir() .. "/swarm-nodes.json", json.encode(json.array(nodes)), "600")
   end
   L.save = save
 
+  L.enrollUntil = tonumber(U.trim(U.read(U.etcdir() .. "/swarm-enroll") or "")) or 0
   -- known nodes from before a reboot
   local known = json.decode(U.read(U.etcdir() .. "/swarm-nodes.json") or "")
   if type(known) == "table" then
@@ -613,9 +616,19 @@ function M.newLeader(conf)
     return { ok = true, jobs = json.array(out) }
   end
 
+  -- seconds = how long new computers and drones may join; always = keep accepting (a growing fleet);
+  -- off = stop now. The window is saved, so it survives restarts of the main.
   function H.enroll(msg)
-    L.enrollUntil = os.time() + math.min(tonumber(msg.seconds) or 1800, 24 * 3600)
-    L.note("accepting new nodes for " .. math.floor((L.enrollUntil - os.time()) / 60) .. " min")
+    if msg.always then
+      L.enrollUntil = os.time() + 10 * 365 * 24 * 3600
+      L.note("accepting new nodes from now on (swarm enroll off to stop)")
+    elseif msg.off then
+      L.enrollUntil = 0
+      L.note("not accepting new nodes")
+    else
+      L.enrollUntil = os.time() + math.min(tonumber(msg.seconds) or 1800, 24 * 3600)
+      L.note("accepting new nodes for " .. math.floor((L.enrollUntil - os.time()) / 60) .. " min")
+    end
     save()
     return { ok = true, until_ = L.enrollUntil }
   end

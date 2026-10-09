@@ -61,7 +61,8 @@ CLEARING BIG AREAS
   TOP and BOTTOM default to 128 and -59 (bedrock below). The main splits the
   area into chunk columns and hands each free drone one, top to bottom in
   bands of 9 layers; a drone keeps its chunk until the bottom. Progress is
-  saved: the order survives restarts of the main. A failed band goes to
+  saved: the order survives restarts of the main. Drones added while it
+  runs join the work at once (swarm enroll always lets them in any time). A failed band goes to
   another drone (3 tries); a drone failing twice in a row pauses 10 min.
 
   Each drone needs:

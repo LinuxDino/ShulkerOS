@@ -38,7 +38,7 @@ usage: swarm init [--work]          make this computer the main node (--work: it
        swarm devices                what is on every computer's bus (machines, storage, tanks)
        swarm stop ID                stop an order, running pieces too
        control                      the Control Center: all of this on one screen
-       swarm enroll [MINUTES]       accept new nodes for a while (default 30)
+       swarm enroll [MINUTES|always|off]   accept new nodes for a while (default 30), always, or not
        swarm forget NODE            remove a node     swarm bench   measure the speed-up
        swarm log                    what the service did     swarm leave   stop being part of it]==]
 
@@ -459,9 +459,17 @@ elseif cmd == "cancel" then
   local r = call({ op = "cancel", id = tonumber(a[2] or ""), all = a[2] == "--all" })
   print(("cancelled %d queued job(s)"):format(r.cancelled))
 elseif cmd == "enroll" then
-  local minutes = tonumber(a[2] or "") or 30
-  call({ op = "enroll", seconds = minutes * 60 })
-  print(("Accepting new nodes for %d minutes."):format(minutes))
+  if a[2] == "always" then
+    call({ op = "enroll", always = true })
+    print("New computers and drones may join at any time now (swarm enroll off to stop).")
+  elseif a[2] == "off" then
+    call({ op = "enroll", off = true })
+    print("New computers and drones can't join now.")
+  else
+    local minutes = tonumber(a[2] or "") or 30
+    call({ op = "enroll", seconds = minutes * 60 })
+    print(("Accepting new nodes for %d minutes."):format(minutes))
+  end
 elseif cmd == "forget" then
   if not a[2] then U.die("usage: swarm forget NODE") end
   call({ op = "forget", name = a[2] })
