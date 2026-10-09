@@ -90,8 +90,9 @@ def main():
         check(rc == 0 and nums == [1, 4, 9, 16, 25, 36, 49, 64], "swarm map spreads work and keeps the order", out)
 
         # a worker can use the swarm too (token learned when it joined)
-        rc, out = workers[-1].run("swarm submit 'echo from-a-worker' && sleep 8 && swarm jobs | tail -n 1")
-        check(rc == 0 and "done" in ANSI.sub("", out), "a worker submits a job with its own token", out)
+        # (idle nodes check in every 10 s, so wait for the job instead of a fixed sleep)
+        rc, out = workers[-1].run("id=$(swarm submit 'echo from-a-worker') && swarm wait $id", timeout=120)
+        check(rc == 0 and "from-a-worker" in ANSI.sub("", out), "a worker submits a job with its own token", out)
 
         rc, out = m.run("swarm bench", timeout=400)
         check(rc == 0 and "Speed-up" in out, "swarm bench", out)
