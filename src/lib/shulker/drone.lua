@@ -264,8 +264,38 @@ end
 
 ---------------------------------------------------------------- work: mining a box
 local function charge()
-  local i = M.info()
+  local i = M.info(true)
   return i and i.charge or 100
+end
+M.now = os.time
+
+-- When must it turn back? A robot's battery lasts only about 25 minutes (CPU, memory, drive and modules
+-- draw power all the time) and it flies one block a second, so a fixed "home at 20 %" strands drones
+-- that work far from their charger. It measures how fast its charge drops and heads home while the trip
+-- (through the travel corridor) still fits, with half again as margin, plus 5 %.
+local drain = { t = nil, c = nil, rate = 100 / 1500 }   -- percent per second; ~25 min to start with
+function M.observeCharge(c)
+  local t = M.now()
+  if drain.t and t > drain.t and c < drain.c then
+    local r = (drain.c - c) / (t - drain.t)
+    drain.rate = math.max(drain.rate * 0.7 + r * 0.3, 0.01)
+  end
+  if not drain.t or c < drain.c or c > drain.c + 5 then drain.t, drain.c = t, c end
+end
+
+function M.tripHome(p)
+  p = p or M.position()
+  if not p then return 0 end
+  local T = M.travelY()
+  if p.x == 0 and p.z == 0 then return math.abs(p.y) end
+  return math.abs(p.y - T) + math.abs(p.x) + math.abs(p.z) + math.abs(T)
+end
+
+function M.needsCharge(low)
+  local c = charge()
+  M.observeCharge(c)
+  local reserve = drain.rate * M.tripHome() * 1.5 + 5
+  return c < math.max(low or 0, reserve), c, reserve
 end
 
 -- go home, wait on the charger until `full` percent, come back to where we were
@@ -276,7 +306,7 @@ function M.recharge(full, log)
   if not ok then return nil, "cannot get home: " .. tostring(err) end
   local waited = 0
   while charge() < (full or 90) do
-    os.execute("sleep 5")
+    M.sleep(5)
     waited = waited + 5
     if waited > 1800 then return nil, "not charging at home: is the charger powered and under the robot?" end
   end
@@ -305,8 +335,8 @@ function M.mine(x1, y1, z1, x2, y2, z2, opts)
     local zs, ze, zd = z1, z2, 1
     for x = x1, x2 do
       for z = zs, ze, zd do
-        if charge() < low then
-          local ok, err = M.recharge(opts.full or 90, log)
+        if M.needsCharge(low) then
+          local ok, err = M.recharge(opts.full or 95, log)
           if not ok then return nil, err end
         end
         local ok, err = M.go(x, y, z, true)
@@ -458,8 +488,8 @@ function M.clear(x1, y1, z1, x2, y2, z2, opts)
     local zs, ze, zd = z1, z2, 1
     for x = x1, x2 do
       for z = zs, ze, zd do
-        if charge() < (opts.low or 20) then
-          local ok, err = M.recharge(opts.full or 90, log)
+        if M.needsCharge(opts.low or 15) then
+          local ok, err = M.recharge(opts.full or 95, log)
           if not ok then return nil, err end
         end
         if M.slots().free < 2 then

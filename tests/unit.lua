@@ -528,7 +528,7 @@ end)
 -- a simulated OC2 robot: world of blocks, 12 slots, pickaxe wear, trash can, the module APIs drone.lua uses
 local function simRobot(opts)
   local W = { solid = {}, pos = { x = 0, y = 0, z = 0 }, facing = "north", dropped = 0, inv = {}, sel = 0,
-              digs = 0, trashed = 0, clock = 0, cd = 0 }
+              digs = 0, trashed = 0, clock = 0, cd = 0, energy = 1000, flat = false, trips = 0 }
   local function key(x, y, z) return x .. "," .. y .. "," .. z end
   for x = opts.box[1], opts.box[4] do for y = opts.box[2], opts.box[5] do for z = opts.box[3], opts.box[6] do
     W.solid[key(x, y, z)] = "minecraft:stone"
@@ -556,7 +556,7 @@ local function simRobot(opts)
   local robot = {
     position = function() return { x = W.pos.x, y = W.pos.y, z = W.pos.z } end,
     facing = function() return W.facing end,
-    energy = function() return 1000 end, capacity = function() return 1000 end,
+    energy = function() return W.energy end, capacity = function() return 1000 end,
     slot = function(v) if v then W.sel = v end return W.sel end,
     stack = function(s) local st = W.inv[s or W.sel] return st and { id = st.id, count = st.count } or nil end,
     detect = function(side) return W.solid[key(target(side))] ~= nil end,
@@ -567,10 +567,11 @@ local function simRobot(opts)
       return true
     end,
     move = function(dir)
+      if W.energy <= 0 then W.flat = true return false end
       local x, y, z = target(dir)
       if W.solid[key(x, y, z)] then return false end
       W.pos = { x = x, y = y, z = z }
-      W.clock = W.clock + 1                       -- OC2: one block per second
+      W.tick(1)                                   -- OC2: one block per second
       return true
     end,
   }
@@ -626,8 +627,19 @@ local function simRobot(opts)
   devices.bus = function() return { find = function(_, name) return mods[name] end } end
   package.loaded["robot"] = robot
   package.loaded["shulker.drone"] = nil
+  -- battery: 1000 lasts 1500 s (OC2: ~25 min); the charger under home (0 0 0) fills it fast
+  W.tick = function(sec)
+    W.clock = W.clock + sec
+    if W.pos.x == 0 and W.pos.y == 0 and W.pos.z == 0 then
+      if W.energy < 900 and W.clock > 5 then W.charged = true end
+      W.energy = math.min(1000, W.energy + 200 * sec)
+    else
+      W.energy = math.max(0, W.energy - (1000 / 1500) * sec)
+    end
+  end
   local Dr = require("shulker.drone")
-  Dr.sleep = function(sec) W.clock = W.clock + sec end
+  Dr.sleep = function(sec) W.tick(sec) end
+  Dr.now = function() return W.clock end
   W.box = opts.box
   W.remaining = function()
     local n = 0
@@ -638,6 +650,23 @@ local function simRobot(opts)
   end
   return W, Dr
 end
+
+test("drone clear far from its charger: turns back in time, never runs flat", function()
+  local realBus = require("shulker.devices").bus
+  -- the box is 300 blocks out: the trip home alone eats ~20 % of a charge
+  -- 1,200 blocks need more than one charge: it must fly home and come back
+  local W, Dr = simRobot({ box = { 300, -3, -18, 309, 2, 1 }, inv = {
+    [0] = { id = "minecraft:netherite_pickaxe", count = 1, tool = true, dur = 100000 },
+    [1] = { id = "trashcans:trash_can", count = 1 } } })
+  local n, err = Dr.clear(300, -3, -18, 309, 2, 1, {})
+  eq(err, nil) eq(n, 1200) eq(W.remaining(), 0)
+  eq(W.flat, false, "it never ran out of power")
+  truthy(W.charged, "it went home to charge in the middle of the job")
+  truthy(W.energy > 0)
+  require("shulker.devices").bus = realBus
+  package.loaded["robot"] = nil
+  package.loaded["shulker.drone"] = nil
+end)
 
 test("drone clear (simulated robot): every block, nothing on the ground, dump block, spare pickaxe", function()
   local realBus = require("shulker.devices").bus
