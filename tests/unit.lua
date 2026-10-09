@@ -352,6 +352,26 @@ test("leader: enrollment, names, heartbeats, jobs, map, requeue", function()
   eq(#status.nodes, 2) eq(status.nodes[1].name, "node1")
 end)
 
+test("leader: a drone that joined before its bus was up becomes droneN, never takes computer work", function()
+  local S = require("shulker.swarm")
+  local L = S.newLeader({ token = "t0k" })
+  L.nodes = {}     -- not the nodes an earlier test saved
+  L.enrollUntil = os.time() + 60
+  -- boot: no robot reported yet, but the drive says drone
+  eq(L.handle({ op = "join", stats = { mac = "d1", ip = "10.43.1.10", kind = "drone" } }).name, "drone1")
+  L.handle({ op = "submit", token = "t0k", cmd = "uptime" })
+  eq(L.handle({ op = "heartbeat", token = "t0k", stats = { mac = "d1", kind = "drone" } }).job, nil,
+     "a drone without its robot report takes no computer job")
+  -- an older drive (no kind) joined as a node; the robot shows up later: renamed, and the reply says so
+  eq(L.handle({ op = "join", stats = { mac = "d2", ip = "10.43.1.11" } }).name, "node1")
+  local h = L.handle({ op = "heartbeat", token = "t0k", stats = { mac = "d2", drone = { charge = 90 } } })
+  eq(h.name, "drone2")
+  eq(h.job, nil, "drones never take computer work")
+  -- a light beat merges and keeps the name; a real computer stays a node
+  eq(L.handle({ op = "heartbeat", token = "t0k", light = true, stats = { mac = "d2", drone = { charge = 89 } } }).name, "drone2")
+  eq(L.handle({ op = "join", stats = { mac = "c1", ip = "10.42.0.5", kind = "node" } }).name, "node1")
+end)
+
 test("orders: words, mine planning, parse", function()
   local O = require("shulker.orders")
   local w = O.words([[map 'echo {} done' a "b c"]])

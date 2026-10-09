@@ -126,17 +126,39 @@ function M.ipNow()
   return addrOf("eth0")
 end
 
--- robots report energy, position and modules (nil on normal computers; checked once)
+-- a drone drive (mkdisk robot, the data pack's Shulker Drone drive) says so in setup.conf: the main can
+-- tell a drone from a computer even before the OC2 bus daemon is up at boot
+function M.droneDrive()
+  for _, l in ipairs(U.lines(U.etcdir() .. "/setup.conf")) do
+    if l:match("^%s*role%s*=%s*drone%s*$") then return true end
+  end
+  return false
+end
+
+-- robots report energy, position and modules (nil on normal computers). "Not a robot" is decided only
+-- when the bus answers and lists no robot device: at boot the bus daemon comes up after swarmd
 local isRobot
 function M.droneInfo(light)
   if isRobot == false then return nil end
   -- swarmd runs all the time: it must reach the robot through OC2's bus daemon only (see devices.lua)
-  require("shulker.devices").daemonOnly = true
-  if not U.exists("/run/oc2/bus") then return nil end
+  local devices = require("shulker.devices")
+  devices.daemonOnly = true
+  if not U.exists(devices.SOCKET) then return nil end
   local ok, D = pcall(require, "shulker.drone")
-  if not ok then isRobot = false return nil end
+  if not ok then return nil end
   local info = D.isDrone() and D.info(light) or nil
-  if not info then isRobot = false return nil end
+  if not info then
+    local list = devices.list()
+    if list and #list > 0 then
+      local robot = false
+      for _, d in ipairs(list) do
+        for _, t in ipairs(d.types) do if t == "robot" then robot = true end end
+      end
+      if not robot then isRobot = false end
+    end
+    return nil
+  end
+  isRobot = true
   -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
   local o = D.origin()
   if o and info.pos then info.pos = D.toWorld(info.pos) info.world = true end
@@ -153,6 +175,12 @@ function M.leaderOf(conf)
     gwAt = os.time()
   end
   return gwCache or M.LEADER_IP
+end
+
+-- "drone" when this is a robot (or a drone drive), else "node"
+function M.kind()
+  if isRobot or M.droneDrive() then return "drone" end
+  return "node"
 end
 
 -- a small status report: what the leader and the dashboards show
@@ -186,7 +214,7 @@ function M.stats(full)
   if not full then
     return {
       mac = M.mac(), ip = M.ip(), load = readNum("/proc/loadavg", "^(%S+)") or 0, mem_free = avail,
-      rx = tonumber(rx0), tx = tonumber(tx0), drone = M.droneInfo(true),
+      rx = tonumber(rx0), tx = tonumber(tx0), drone = M.droneInfo(true), kind = M.kind(),
       energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
       alerts = mon and #(mon.alerts or {}) or nil,
     }
@@ -204,6 +232,7 @@ function M.stats(full)
     uptime = math.floor(readNum("/proc/uptime", "^(%S+)") or 0),
     rx = tonumber(rx), tx = tonumber(tx),
     drone = M.droneInfo(),
+    kind = M.kind(),
     devices = M.busSummary(),
     energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
     alerts = mon and #(mon.alerts or {}) or nil,
@@ -438,6 +467,8 @@ function M.newLeader(conf)
     for _, j in ipairs(L.jobs) do
       if j.state == "queued" and j.target == n.name then return j end
     end
+    -- a drone whose robot is not reported yet (bus daemon still starting) waits: never computer work
+    if not isDrone(n) and type(n.stats) == "table" and n.stats.kind == "drone" then return nil end
     local shared = isDrone(n) and "drone" or "any"
     if isDrone(n) and (tonumber(n.stats.drone.charge) or 100) < 25 then return nil end   -- let it charge first
     for _, j in ipairs(L.jobs) do
@@ -472,6 +503,24 @@ function M.newLeader(conf)
 
   local H = {}
 
+  local function isDroneMsg(st)
+    return type(st) == "table" and (type(st.drone) == "table" or st.kind == "drone")
+  end
+
+  -- a drone that joined as "nodeN" (older Shulker OS, or the bus was not up yet) becomes "droneN";
+  -- the reply carries the new name and the drone takes it as its hostname
+  local function droneRename(n)
+    if not n.name:match("^node%d+$") or not isDroneMsg(n.stats) then return end
+    local old, new = n.name, nodeName("drone")
+    n.name = new
+    for _, j in ipairs(L.jobs) do
+      if j.node == old then j.node = new end
+      if j.target == old then j.target = new end
+    end
+    L.note(old .. " is a drone: now " .. new)
+    save()
+  end
+
   function H.join(msg)
     local mac = msg.stats and msg.stats.mac or msg.mac
     if not mac then return { error = "no MAC address" } end
@@ -480,12 +529,13 @@ function M.newLeader(conf)
       if os.time() > L.enrollUntil then
         return { error = "the swarm is not accepting new nodes: run `swarm enroll` on the main node" }
       end
-      n = { name = nodeName(msg.stats.drone and "drone" or "node"), mac = mac, joined = os.date("%Y-%m-%d %H:%M") }
+      n = { name = nodeName(isDroneMsg(msg.stats) and "drone" or "node"), mac = mac, joined = os.date("%Y-%m-%d %H:%M") }
       L.nodes[mac] = n
       L.note(n.name .. " joined (" .. tostring(msg.stats and msg.stats.ip) .. ")")
       save()
     end
     n.seen, n.stats, n.ip, n.via = os.time(), msg.stats, msg.stats and msg.stats.ip, msg.via
+    droneRename(n)
     return { ok = true, name = n.name, token = L.conf.token }
   end
 
@@ -519,6 +569,7 @@ function M.newLeader(conf)
       n.stats = msg.stats
     end
     n.seen, n.ip, n.via = now, msg.stats.ip or n.ip, msg.via
+    droneRename(n)
     -- results of finished jobs
     for _, r in ipairs(msg.results or {}) do
       local j = L.job(r.id)
@@ -894,6 +945,8 @@ function M.osToken()
 end
 
 function M.joinScript(leaderIp)
+  -- served by a drone base over a tunnel link (10.43.x): this is a robot
+  local role = leaderIp:match("^10%.43%.") and "drone" or "worker"
   return table.concat({
     "#!/bin/sh",
     "# Shulker Swarm network install, served by the main node " .. leaderIp,
@@ -903,7 +956,7 @@ function M.joinScript(leaderIp)
     "mkdir -p /etc/shulker",
     "printf 'leader=" .. leaderIp .. "\\nport=" .. M.PORT .. "\\nrole=worker\\n' > /etc/shulker/swarm.conf",
     "chmod 600 /etc/shulker/swarm.conf",
-    "[ -f /etc/shulker/setup.conf ] || printf 'role=worker\\nclaude=off\\n' > /etc/shulker/setup.conf",
+    "[ -f /etc/shulker/setup.conf ] || printf 'role=" .. role .. "\\nclaude=off\\n' > /etc/shulker/setup.conf",
     "/opt/shulker/bin/netcfg dhcp >/dev/null 2>&1 || true",
     "/opt/shulker/bin/swarm services",
     "echo ':: joined. This computer shows up in `swarm status` on the main node in a few seconds.'",

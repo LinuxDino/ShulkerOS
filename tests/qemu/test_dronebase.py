@@ -77,6 +77,8 @@ def main():
                 break
             time.sleep(3)
         check(joined, "base and drone both joined the main", out)
+        # no robot in QEMU: the Shulker Drone drive alone makes it a drone (it joins before any bus is up)
+        check(re.search(r"\bdrone1\b", ANSI.sub("", out)) is not None, "the drone joined as drone1, not as a node", out)
         # and the base keeps working after a reboot (uplink remembered, services back)
         b.sh("sync")
         b.stop()
