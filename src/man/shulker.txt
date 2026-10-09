@@ -9,6 +9,7 @@ SYNOPSIS
   shulker linux [status | kernel | install [DEV]]
   shulker disks [status | setup [--raid0|--linear|--raid1|--separate] | mount]
   shulker mkdisk [lab|robot|plain] [--all | /dev/vdX ...] [--yes]
+  shulker autoupdate [on|off]
   shulker slim [--yes]
   shulker setup
   shulker enable|disable claude
@@ -70,6 +71,9 @@ DESCRIPTION
                plain  the setup wizard runs at the first login
              Then shut down, take the drives out, put each one in the first
              bay of a computer. Empty floppy/flash drives are never used.
+  autoupdate automatic updates (default on): the swarm's main checks GitHub
+             once a day, every other member follows the main when idle.
+             Updates only replace files whose checksum changed.
   slim       removes MicroPython and the tcc C compiler from stock Sedna
              (about 650 KB), which Shulker OS and the swarm never use. Do it
              on 8 MB drives before `shulker install mdadm`.

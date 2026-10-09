@@ -65,6 +65,8 @@ if mode == "leader" then
   if web then web:settimeout(0) log("serving the network install on port", S.HTTP_PORT)
   else log("cannot serve the network install on port", S.HTTP_PORT) end
   local lastReap, lastGw = 0, 0
+  -- automatic updates: the main checks GitHub 15 minutes after it starts, then once a day
+  local nextAuto = os.time() + 900
   while true do
     local ready = socket.select(web and { server, web } or { server }, nil, 1)
     if web and ready and ready[web] then
@@ -86,6 +88,14 @@ if mode == "leader" then
         local okEnc, text = pcall(json.encode, reply)
         c:send((okEnc and text or '{"error":"encode failed"}') .. "\n")
         c:close()
+      end
+    end
+    if os.time() >= nextAuto then
+      nextAuto = os.time() + 24 * 3600
+      if require("shulker.pkg").autoUpdate() then
+        log("automatic update: checking GitHub")
+        os.execute(("(echo; date; SHULKER_HOME=%s %s update) >> /tmp/shulker-autoupdate.log 2>&1 &")
+          :format(U.q(U.home()), U.q(U.home() .. "/bin/shulker")))
       end
     end
     if os.time() - lastReap >= 2 then
@@ -223,6 +233,7 @@ end
 log("worker for", S.leaderOf(conf) .. ":" .. conf.port)
 local lastDhcp = 0
 local goingHome = false
+local lastAutoCheck, lastAutoUpdate = 0, 0
 while true do
   checkJob()
   restartIfUpdated(not running and #results == 0)
@@ -260,6 +271,18 @@ while true do
     if reply then
       results = {}
       setName(reply.name)
+      -- automatic updates: behind the main (its fingerprint differs from our manifest) and idle -> update
+      if reply.os and conf.role ~= "main" and not running and os.time() - lastAutoCheck >= 60 then
+        lastAutoCheck = os.time()
+        local pkg = require("shulker.pkg")
+        local mine = pkg.sha256(U.home() .. "/manifest.txt")
+        if mine ~= reply.os and pkg.autoUpdate() and os.time() - lastAutoUpdate >= 600 then
+          lastAutoUpdate = os.time()
+          log("automatic update: the main has a newer Shulker OS")
+          os.execute(("(echo; date; SHULKER_HOME=%s %s update) >> /tmp/shulker-autoupdate.log 2>&1 &")
+            :format(U.q(U.home()), U.q(U.home() .. "/bin/shulker")))
+        end
+      end
       for _, id in ipairs(reply.stop or {}) do
         if running and tonumber(id) == tonumber(running.id) then
           local pg = U.trim(U.read(running.dir .. "/pgid") or "")

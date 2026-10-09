@@ -15,6 +15,8 @@ SENSORS
                   (batteries, capacitors: anything with energy that a
                   bus cable touches)
   energy.1 ..     each storage on its own
+  fluid.1 ..      a tank's fill, percent (any mod's tank)
+  storage.1 ..    an inventory's slots in use, percent (read once a minute)
   redstone.SIDE   input level 0-15 of the redstone interface; SIDE is
                   up down north south east west
   comparator      a comparator's output 0-15 (e.g. how full a chest is)

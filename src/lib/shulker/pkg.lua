@@ -85,6 +85,32 @@ function M.fetchText(url)
   return s
 end
 
+-- sha256 of a string (BusyBox has no other way than through a file)
+function M.sha256Text(s)
+  local tmp = os.tmpname()
+  U.write(tmp, s)
+  local sum = M.sha256(tmp)
+  os.remove(tmp)
+  return sum
+end
+
+-- apps whose version in the repository differs from the installed one
+function M.outdated()
+  local idx = M.index()
+  local out = {}
+  if not idx then return out end
+  local have = M.installed()
+  for _, name in ipairs(have) do
+    if idx[name] and idx[name].version ~= have[name] then out[#out + 1] = name end
+  end
+  return out
+end
+
+-- automatic updates: on unless /etc/shulker/autoupdate says off
+function M.autoUpdate()
+  return not (U.read(U.etcdir() .. "/autoupdate") or ""):match("off")
+end
+
 function M.sha256(path)
   local out = U.capture("sha256sum " .. U.q(path))
   return out:match("^(%x+)")
@@ -182,7 +208,12 @@ function M.update(opts)
   end
   need = need + biggest
   local info = { current = U.trim(U.read(home .. "/VERSION") or "?"), latest = meta.version or "?", changed = #changed }
-  if opts.check or #changed == 0 then return info end
+  if opts.check then return info end
+  if #changed == 0 then
+    -- nothing to replace, but keep the list itself current: the swarm compares lists to see who is behind
+    if U.read(home .. "/manifest.txt") ~= text then U.write(home .. "/manifest.txt", text) end
+    return info
+  end
   local free = M.freeKB(home)
   if free and need / 1024 + 64 > free then
     return nil, ("not enough disk space: the update needs %d KB, %d KB free"):format(math.ceil(need / 1024) + 64, free)

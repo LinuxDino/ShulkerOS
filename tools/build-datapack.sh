@@ -134,7 +134,7 @@ fi
 cat > "$B/pack/pack.mcmeta" <<EOF
 {
   "pack": {
-    "description": "Shulker OS $VERSION for OpenComputers II: Linux with Claude built in",
+    "description": "Shulker OS $VERSION for OpenComputers II: swarms, drones, storage and control",
     "min_format": 101,
     "max_format": 101
   }

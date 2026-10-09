@@ -1,0 +1,99 @@
+#!/usr/bin/lua
+-- find SHULKER_HOME (/opt/shulker, or /mnt/builtin/shulker from the data pack) and its libraries
+local H = os.getenv("SHULKER_HOME")
+if not H or H == "" then
+  local p = arg and arg[0] or ""
+  local d = p:match("^(.*)/bin/[^/]+$") or (p:match("^bin/[^/]+$") and ".")
+  for _, c in ipairs({ d or "", (d or "") .. "/shulker", "/opt/shulker", "/mnt/builtin/shulker" }) do
+    local f = c ~= "" and io.open(c .. "/lib/shulker/util.lua")
+    if f then f:close() H = c break end
+  end
+end
+H = H or "/opt/shulker"
+package.path = H .. "/lib/?.lua;" .. package.path
+require("shulker.util").setHome(H)
+
+-- storage: inventories and tanks on this computer (any mod, through bus interfaces); swarm-wide: swarm find
+local U = require("shulker.util")
+local json = require("shulker.json")
+local ST = require("shulker.storage")
+local c = U.c
+
+local USAGE = [==[
+usage: storage                    inventories, tanks and energy on this computer's bus
+       storage find WORD [--json] where an item is, e.g. storage find diamond
+       storage items [--json]     every item on this computer, most first
+       swarm find WORD            the same over every computer in the swarm
+Works with any mod's storage through a bus interface (AE2 / Refined Storage interfaces,
+Sophisticated Storage, drawers, tanks, energy cells). Name interfaces with the wrench.
+see `man storage`]==]
+
+local a = arg
+local cmd = a[1] or "list"
+local asJson = false
+for i = #a, 1, -1 do if a[i] == "--json" then asJson = true table.remove(a, i) end end
+
+local function fmt(n)
+  n = tonumber(n) or 0
+  if n >= 1e6 then return ("%.1fM"):format(n / 1e6) elseif n >= 1e4 then return ("%.1fk"):format(n / 1e3) end
+  return tostring(math.floor(n))
+end
+
+if cmd == "-h" or cmd == "--help" or cmd == "help" then print(USAGE) os.exit(0) end
+
+if cmd == "list" then
+  local inv, err = ST.list()
+  if not inv then U.die("storage: " .. err) end
+  if #inv.items + #inv.fluids + #inv.energy == 0 then
+    print("Nothing on the bus holds items, fluids or energy.")
+    print("Put a bus interface on a cable next to a chest, tank, ME interface or battery.")
+    os.exit(0)
+  end
+  for _, d in ipairs(inv.items) do
+    local r = ST.scanItems(d.id)
+    local top = {}
+    for item, n in pairs(r.items) do top[#top + 1] = { item, n } end
+    table.sort(top, function(x, y) return x[2] > y[2] end)
+    local shown = {}
+    for i = 1, math.min(3, #top) do shown[#shown + 1] = fmt(top[i][2]) .. " " .. ST.short(top[i][1]) end
+    print(("%s %-16s %4d/%-4d slots%s  %s"):format(c("accent", "#"), d.name:sub(1, 16), r.used, r.slots,
+      r.truncated and "+" or " ", c("dim", table.concat(shown, ", "))))
+  end
+  for _, d in ipairs(inv.fluids) do
+    local r = ST.scanFluids(d.id)
+    local what = {}
+    for _, t in ipairs(r.tanks) do if t.fluid then what[#what + 1] = ST.short(t.fluid) end end
+    local pct = r.capacity > 0 and math.floor(r.amount / r.capacity * 100) or 0
+    print(("%s %-16s %3d%%  %s / %s mB  %s"):format(c("info", "~"), d.name:sub(1, 16), pct, fmt(r.amount), fmt(r.capacity),
+      c("dim", table.concat(what, ", "))))
+  end
+  local bus = require("shulker.devices").bus()
+  for _, d in ipairs(inv.energy) do
+    local ok1, st = pcall(bus.invoke, bus, d.id, "getEnergyStored")
+    local ok2, mx = pcall(bus.invoke, bus, d.id, "getMaxEnergyStored")
+    st, mx = ok1 and tonumber(st) or 0, ok2 and tonumber(mx) or 0
+    print(("%s %-16s %3d%%  %s / %s FE"):format(c("ok", "+"), d.name:sub(1, 16), mx > 0 and math.floor(st / mx * 100) or 0, fmt(st), fmt(mx)))
+  end
+elseif cmd == "find" or cmd == "items" then
+  local word = cmd == "find" and table.concat(a, " ", 2) or ""
+  if cmd == "find" and word == "" then U.die("usage: storage find WORD") end
+  local list, err = ST.find(word)
+  if not list and asJson then
+    -- for swarm find: a computer without a device bus still answers, with nothing found
+    print(json.encode({ host = U.trim(U.read("/etc/hostname") or "?"), found = json.array({}), error = err }))
+    os.exit(0)
+  end
+  if not list then U.die("storage: " .. err) end
+  if asJson then
+    print(json.encode({ host = U.trim(U.read("/etc/hostname") or "?"), found = json.array(list) }))
+    os.exit(0)
+  end
+  if #list == 0 then print(cmd == "find" and ("no " .. word .. " here") or "no items") os.exit(cmd == "find" and 1 or 0) end
+  for _, f in ipairs(list) do
+    local where = {}
+    for _, w in ipairs(f.where) do where[#where + 1] = w.name .. " " .. fmt(w.count) end
+    print(("%8s  %-28s %s"):format(fmt(f.count), ST.short(f.item):sub(1, 28), c("dim", table.concat(where, ", "))))
+  end
+else
+  U.die("storage: unknown command " .. cmd .. "\n" .. USAGE)
+end

@@ -34,6 +34,8 @@ usage: swarm init [--work]          make this computer the main node (--work: it
        swarm order COMMAND          split work over the swarm: mine X1 Y1 Z1 X2 Y2 Z2, home [all],
                                     go DRONE X Y Z, run [on NAME|all] CMD, map 'CMD {}' ITEM...
        swarm orders [ID]            orders with progress (ID: every piece and its output)
+       swarm find WORD              which computer's inventories hold an item (any mod)
+       swarm devices                what is on every computer's bus (machines, storage, tanks)
        swarm stop ID                stop an order, running pieces too
        control                      the Control Center: all of this on one screen
        swarm enroll [MINUTES]       accept new nodes for a while (default 30)
@@ -395,6 +397,37 @@ elseif cmd == "order" then
   print(("order %d: %s, %d piece%s%s"):format(r.id, o.label, #o.pieces, #o.pieces == 1 and "" or "s",
     o.note and (" (" .. o.note .. ")") or ""))
   print("follow it with `swarm orders " .. r.id .. "` or in `control`")
+elseif cmd == "devices" then
+  local st = call({ op = "status" })
+  for _, n in ipairs(st.nodes) do
+    local d = n.stats and n.stats.devices
+    local parts = {}
+    if type(d) == "table" then
+      local names = {}
+      for k in pairs(d) do names[#names + 1] = k end
+      table.sort(names)
+      for _, k in ipairs(names) do parts[#parts + 1] = (d[k] > 1 and (d[k] .. "x ") or "") .. k end
+    end
+    print(("%-9s %s"):format(n.name, #parts > 0 and table.concat(parts, ", ") or
+      c("dim", n.online and "nothing reported (bus daemon not running, or old Shulker OS)" or "offline")))
+  end
+elseif cmd == "find" then
+  local word = table.concat(a, " ", 2)
+  if word == "" then U.die("usage: swarm find WORD   (e.g. swarm find diamond)") end
+  local ST = require("shulker.storage")
+  if U.isatty(2) then io.stderr:write("asking every computer...\r") end
+  local r, err = ST.swarmFind(call, word)
+  if U.isatty(2) then io.stderr:write("\27[K") end
+  if not r then U.die("swarm: " .. err) end
+  if #r.list == 0 then print(("no %s on %d computer%s"):format(word, r.answered, r.answered == 1 and "" or "s")) end
+  for _, f in ipairs(r.list) do
+    local where = {}
+    for _, w in ipairs(f.where) do where[#where + 1] = w.host .. " " .. w.count end
+    print(("%8d  %-28s %s"):format(f.count, ST.short(f.item):sub(1, 28), c("dim", table.concat(where, ", "))))
+  end
+  if r.answered < r.asked then
+    print(c("warn", ("%d of %d computers did not answer (old Shulker OS or busy)"):format(r.asked - r.answered, r.asked)))
+  end
 elseif cmd == "orders" then
   local r = call({ op = "orders", id = tonumber(a[2] or "") })
   if #r.orders == 0 then print("no orders yet: swarm order ... or control") end

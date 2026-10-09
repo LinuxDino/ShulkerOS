@@ -1,0 +1,41 @@
+storage - inventories, tanks and energy, from any mod
+
+SYNOPSIS
+  storage
+  storage find WORD [--json]
+  storage items [--json]
+  swarm find WORD
+
+DESCRIPTION
+  OC2 reaches blocks of other mods through a bus interface on a bus cable
+  next to them. Anything that holds items, fluids or energy shows up: chests,
+  barrels, Sophisticated Storage, drawers, AE2 ME interfaces and storage
+  buses, Refined Storage interfaces, Mekanism tanks and energy cubes, Powah
+  cells, machines with inventories, and so on.
+
+  storage        every inventory (slots used, top items), tank (fluid, fill)
+                 and energy store on this computer's bus
+  storage find   where an item is and how many, e.g. storage find diamond
+  storage items  everything, most first
+  swarm find     the same on every computer of the swarm at once, added up
+
+  Words match item ids: diamond, iron_ingot, mekanism: (a whole mod).
+  Inventories bigger than 512 slots are read only that far (shown as +).
+
+  Give a bus interface a name with the wrench and storage uses it
+  ("ore-chest" instead of "inventory 2").
+
+WHAT WORKS WITH OTHER MODS
+  Item counts, fluid levels and stored energy work for every mod. Functions
+  of a specific mod do not: OC2 has no driver that asks AE2 to craft, or
+  changes a machine's settings. An ME interface shows the items in its own
+  slots, not the whole ME network; a storage bus or interface set up to
+  expose items is what you read.
+
+SENSORS
+  The monitor reads fluid.N (tank percent) and storage.N (slots used,
+  percent, once a minute) for alarm rules, e.g.
+      monitor add tank-low fluid.1 '<' 10 redstone:up
+
+SEE ALSO
+  monitor, swarm, control, dashboard

@@ -31,6 +31,7 @@ usage: shulker version                 version, where it's installed, repository
        shulker linux install [DEV]     write Shulker Linux to an empty drive (then swap drives)
        shulker disks [setup --raid0|--linear|--raid1|--separate]   extra drives as /data
        shulker mkdisk [lab|robot|plain] [--all|DEV...]   make ready drives from blank drives
+       shulker autoupdate [on|off]     daily updates on the main; the swarm follows it (default on)
        shulker slim [--yes]            remove MicroPython and tcc (about 650 KB) to make room
        shulker setup                   run the setup wizard again
        shulker enable|disable claude   turn the Claude assistant on or off
@@ -58,6 +59,17 @@ elseif cmd == "enable" or cmd == "disable" then
   U.mkdir(U.etcdir())
   U.write(path, table.concat(lines, "\n") .. "\n")
   print("Claude assistant " .. (cmd == "enable" and "on" or "off") .. ".")
+  os.exit(0)
+elseif cmd == "autoupdate" then
+  local path = U.etcdir() .. "/autoupdate"
+  if a[2] == "on" or a[2] == "off" then
+    U.mkdir(U.etcdir())
+    U.write(path, a[2] .. "\n")
+  elseif a[2] then U.die("usage: shulker autoupdate [on|off]") end
+  local on = pkg.autoUpdate()
+  print("automatic updates: " .. (on and c("ok", "on") or c("warn", "off")))
+  print(c("dim", "The swarm's main checks GitHub once a day; every other computer and drone follows the main"))
+  print(c("dim", "within a few minutes (when idle). Log: /tmp/shulker-autoupdate.log"))
   os.exit(0)
 elseif cmd == "slim" then
   -- stock Sedna ships MicroPython and the tcc C compiler; a swarm worker needs neither
@@ -256,7 +268,7 @@ elseif cmd == "update" or cmd == "upgrade" then
     print(c("dim", "Open a new shell (or log in again) to pick up profile changes."))
   end
   if not opts.check then
-    for _, name in ipairs(pkg.installed()) do
+    for _, name in ipairs(pkg.outdated()) do
       local ver, perr = pkg.installPkg(name, progress)
       done()
       print(ver and (c("ok", "updated ") .. name .. " " .. ver) or c("err", name .. ": " .. tostring(perr)))

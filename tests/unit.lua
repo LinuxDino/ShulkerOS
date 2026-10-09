@@ -413,6 +413,65 @@ test("leader: orders go to free drones, progress, stop", function()
   eq(L.handle({ op = "heartbeat", token = "t", stats = st("d2", { charge = 60 }) }).job.id, h3.job.id)
 end)
 
+test("storage: inventories, tanks, find, swarm find (fake bus)", function()
+  local devices = require("shulker.devices")
+  local realList, realBus = devices.list, devices.bus
+  local slots = {
+    chest = { { id = "minecraft:diamond", count = 5 }, false, { id = "minecraft:iron_ingot", count = 64 } },
+    me = { { id = "minecraft:diamond", count = 100 }, { id = "mekanism:ingot_osmium", count = 7 } },
+  }
+  devices.list = function() return {
+    { id = "chest", types = { "item_handler" } },
+    { id = "me", types = { "item_handler", "storage_me" } },
+    { id = "tank", types = { "fluid_handler" } },
+    { id = "cell", types = { "energy_storage" } } } end
+  local fakeBus = { invoke = function(_, id, m, a1)
+    if m == "getItemSlotCount" then return #slots[id] end
+    if m == "getItemStackInSlot" then local st = slots[id][a1 + 1] return st or nil end
+    if m == "getFluidTankCount" then return 1 end
+    if m == "getFluidInTank" then return { id = "minecraft:water", amount = 4000 } end
+    if m == "getFluidTankCapacity" then return 16000 end
+  end }
+  devices.bus = function() return fakeBus end
+  package.loaded["shulker.storage"] = nil
+  local ST = require("shulker.storage")
+  local inv = ST.list()
+  eq(#inv.items, 2) eq(inv.items[1].name, "inventory 1") eq(inv.items[2].name, "storage_me", "custom names win")
+  eq(#inv.fluids, 1) eq(#inv.energy, 1)
+  local r = ST.scanItems("chest")
+  eq(r.slots, 3) eq(r.used, 2) eq(r.total, 69) eq(r.items["minecraft:diamond"], 5)
+  local f = ST.scanFluids("tank")
+  eq(f.amount, 4000) eq(f.capacity, 16000) eq(f.tanks[1].fluid, "minecraft:water")
+  local found = ST.find("diamond")
+  eq(#found, 1) eq(found[1].count, 105) eq(#found[1].where, 2)
+  eq(#ST.find("mekanism:"), 1)
+  eq(ST.short("minecraft:diamond_ore"), "diamond ore") eq(ST.short("mekanism:ingot_osmium"), "mekanism:ingot osmium")
+  truthy(ST.matches("minecraft:diamond_ore", "diamond ore"))
+  -- swarm find: two computers answer, one drone is skipped
+  local submitted = {}
+  local outs = {
+    node1 = json.encode({ host = "node1", found = json.array({ { item = "minecraft:diamond", count = 105 } }) }),
+    node2 = "noise\n" .. json.encode({ host = "node2", found = json.array({ { item = "minecraft:diamond", count = 3 } }) }),
+  }
+  local function call(msg)
+    if msg.op == "status" then return { nodes = {
+      { name = "node1", online = true, stats = {} }, { name = "node2", online = true, stats = {} },
+      { name = "drone1", online = true, stats = { drone = { charge = 50 } } } } } end
+    if msg.op == "submit" then submitted[#submitted + 1] = msg.target return { ids = { #submitted } } end
+    if msg.op == "jobs" then
+      local js = {}
+      for i, t in ipairs(submitted) do js[#js + 1] = { id = i, node = t, state = "done", out = outs[t] } end
+      return { jobs = js }
+    end
+  end
+  local real = os.execute
+  os.execute = function(c) if c == "sleep 2" then return true end return real(c) end
+  local res = ST.swarmFind(call, "diamond")
+  os.execute = real
+  eq(#submitted, 2, "drones are not asked") eq(res.answered, 2) eq(res.list[1].count, 108)
+  devices.list, devices.bus = realList, realBus
+end)
+
 os.execute("rm -rf " .. U.q(tmp))
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

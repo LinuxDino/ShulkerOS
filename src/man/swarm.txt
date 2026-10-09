@@ -75,3 +75,17 @@ UPDATES AND APPS IN THE SWARM
   /data/.shulker-cache, or /tmp) and hands it to everyone; the first ask
   waits a moment while it fetches. Drones go through their drone base.
   Update the main first:  shulker update,  then  swarm run --on all shulker update
+
+SEARCHING AND MACHINES
+  swarm find WORD     which computer's inventories hold an item, added up
+                      (see `man storage`)
+  swarm devices       what each computer has on its bus: inventories, tanks,
+                      energy, redstone, machines
+
+AUTOMATIC UPDATES
+  The main checks GitHub 15 minutes after it starts and then once a day.
+  Every other computer and drone compares its Shulker OS with the main's at
+  each heartbeat; when it is behind and idle it updates itself from the main
+  and restarts its swarm service. New features reach the whole swarm without
+  typing anything. Off: shulker autoupdate off (on the main stops it for all
+  that follow it). Log: /tmp/shulker-autoupdate.log

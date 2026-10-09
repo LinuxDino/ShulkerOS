@@ -5,7 +5,8 @@
 -- /etc/shulker/monitor.conf:
 --   interval=5
 --   rule NAME SENSOR OP VALUE ACTION [ARGS]
---     SENSOR  energy (percent of all energy storage), energy.1 .., redstone.SIDE, comparator, furnace,
+--     SENSOR  energy (percent of all energy storage), energy.1 .., fluid.1 .. (tank percent),
+--             storage.1 .. (inventory slots used, percent), redstone.SIDE, comparator, furnace,
 --             swarm.offline, swarm.alerts, drone.charge, mem, disk, load
 --     OP      <  <=  >  >=  =  !=
 --     ACTION  log | redstone:SIDE (on while the alert lasts) | run:COMMAND (once when it starts)
@@ -84,6 +85,28 @@ function M.read()
         label = ("%d / %d FE"):format(stored, max) }
     end
     if cap > 0 then s.energy = { value = math.floor(total / cap * 100 + 0.5), unit = "%", label = ("%d / %d FE"):format(total, cap) } end
+    -- tanks of any mod: fluid.N = percent full
+    local ST = require("shulker.storage")
+    for i, id in ipairs(devicesOf("fluid_handler")) do
+      local f = ST.scanFluids(id)
+      if f.capacity > 0 then
+        local what = f.tanks[1] and f.tanks[1].fluid and ST.short(f.tanks[1].fluid) or "empty"
+        s["fluid." .. i] = { value = math.floor(f.amount / f.capacity * 100 + 0.5), unit = "%",
+                             label = ("%s %d/%d mB"):format(what, f.amount, f.capacity) }
+      end
+    end
+    -- inventories: storage.N = percent of slots used (read at most once a minute: it is one call per slot)
+    if os.time() - (M.storageAt or 0) >= 60 then
+      M.storageAt, M.storageCache = os.time(), {}
+      for i, id in ipairs(devicesOf("item_handler")) do
+        local r = ST.scanItems(id, 256)
+        if r.slots > 0 then
+          M.storageCache["storage." .. i] = { value = math.floor(r.used / math.min(r.slots, 256) * 100 + 0.5), unit = "%",
+                                              label = ("%d/%d slots, %d items"):format(r.used, r.slots, r.total) }
+        end
+      end
+    end
+    for k, v in pairs(M.storageCache or {}) do s[k] = v end
     local rs = devicesOf("redstone")[1]
     if rs then
       for _, side in ipairs(M.SIDES) do

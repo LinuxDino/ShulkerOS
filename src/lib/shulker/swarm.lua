@@ -139,6 +139,24 @@ function M.leaderOf(conf)
 end
 
 -- a small status report: what the leader and the dashboards show
+-- what is on this computer's device bus, by type name, at most every 30 s (through OC2's bus daemon only)
+local busCache, busAt = nil, 0
+function M.busSummary()
+  if os.time() - busAt < 30 then return busCache end
+  busAt = os.time()
+  local devices = require("shulker.devices")
+  devices.daemonOnly = true
+  if not U.exists(devices.SOCKET) then busCache = nil return nil end
+  local list = devices.list()
+  if not list then return busCache end
+  local count = {}
+  for _, d in ipairs(list) do
+    for _, t in ipairs(d.types) do count[t] = (count[t] or 0) + 1 end
+  end
+  busCache = count
+  return count
+end
+
 function M.stats()
   local okM, monitor = pcall(require, "shulker.monitor")
   local mon = okM and monitor.state(30)
@@ -158,6 +176,7 @@ function M.stats()
     uptime = math.floor(readNum("/proc/uptime", "^(%S+)") or 0),
     rx = tonumber(rx), tx = tonumber(tx),
     drone = M.droneInfo(),
+    devices = M.busSummary(),
     energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
     alerts = mon and #(mon.alerts or {}) or nil,
     version = U.trim(U.read(U.home() .. "/VERSION") or U.VERSION),
@@ -326,7 +345,7 @@ function M.newLeader(conf)
       if n.busy == tonumber(r.id) then n.busy = nil end
     end
     if msg.running then n.busy = tonumber(msg.running) else n.busy = nil end
-    local reply = { ok = true, name = n.name }
+    local reply = { ok = true, name = n.name, os = M.osToken() }
     -- running jobs someone stopped (swarm stop): the node kills them and reports the result
     for _, x in ipairs(L.jobs) do
       if x.state == "running" and x.node == n.name and x.stop then
@@ -601,6 +620,7 @@ function M.manifest()
   local key = (U.read(home .. "/manifest.txt") or "") .. (U.read(home .. "/VERSION") or "")
   if manifestCache and key == manifestKey then return manifestCache end
   manifestKey = key
+  if not U.isdir(home) then manifestCache, M.osTokenCache = "", nil return "" end
   local list = U.capture("cd " .. U.q(home) .. " && find . -type f ! -name manifest.txt ! -name '*.tmp' | sed 's|^./||' | LC_ALL=C sort")
   local lines = { "version " .. U.trim(U.read(home .. "/VERSION") or U.VERSION) }
   for path in list:gmatch("[^\n]+") do
@@ -609,7 +629,15 @@ function M.manifest()
     if sum and data then lines[#lines + 1] = sum .. " " .. #data .. " " .. path end
   end
   manifestCache = table.concat(lines, "\n") .. "\n"
+  M.osTokenCache = require("shulker.pkg").sha256Text(manifestCache)
   return manifestCache
+end
+
+-- a fingerprint of the Shulker OS the main hands out: a worker whose own manifest.txt hashes to
+-- something else is behind and updates itself (swarmd, automatic updates)
+function M.osToken()
+  M.manifest()
+  return M.osTokenCache
 end
 
 function M.joinScript(leaderIp)

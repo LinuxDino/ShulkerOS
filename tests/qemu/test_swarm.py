@@ -132,6 +132,24 @@ def main():
         rc, out = m.wait_rc(timeout=30)
         check(drew and rc == 0, "control draws the Control Center and quits with q", out)
 
+        # storage search over the swarm (no OC2 bus in QEMU: every computer answers with nothing found)
+        rc, out = m.run("swarm find diamond", timeout=240)
+        check(rc == 0 and re.search(r"no diamond on \d+ computers", ANSI.sub("", out)) is not None,
+              "swarm find asks every computer", out)
+        rc, out = m.run("swarm devices")
+        check(rc == 0 and "node1" in out, "swarm devices lists every computer", out)
+
+        # automatic updates: the main gets a new version, a worker follows by itself
+        m.sh("echo 1.0.1-autotest > /opt/shulker/VERSION")
+        followed = False
+        for _ in range(40):
+            rc, out = m.run("swarm run --on node2 'cat /opt/shulker/VERSION'", timeout=60)
+            if "1.0.1-autotest" in out:
+                followed = True
+                break
+            time.sleep(5)
+        check(followed, "a worker updates itself to the main's new version", out)
+
         # a node that goes away: its queued work goes to the others
         workers[-1].stop()
         rc, out = m.run("swarm map 'sleep 2; echo ok-{}' a b c d", timeout=300)

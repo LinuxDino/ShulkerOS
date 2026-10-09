@@ -100,6 +100,9 @@ M.LIST = {
   { name = "swarm_stop", risky = true,
     description = "Stop an order: queued pieces are dropped and running ones are ended (drones stop where they are).",
     input_schema = obj({ order = INT("order number") }, { "order" }) },
+  { name = "storage_find",
+    description = "Find items in the inventories reachable through bus interfaces (chests, AE2 / Refined Storage interfaces, Sophisticated Storage, drawers, any mod): on this computer, or on every computer of the swarm at once. word matches item ids, e.g. 'diamond', 'iron_ingot', 'mekanism:'. An empty word lists everything (this computer only).",
+    input_schema = obj({ word = STR("part of an item id"), swarm = BOOL("search every computer (default true when in a swarm)") }, { "word" }) },
   { name = "monitor_status",
     description = "Sensors and alarms on this computer (Shulker monitor): energy storage percent, redstone inputs, comparator, furnace, memory, disk, drone battery, swarm offline count, the active alerts and the alert rules.",
     input_schema = obj() },
@@ -120,7 +123,9 @@ The machine: a RISC-V computer running Sedna Linux (Linux 6.6, BusyBox ash, Lua 
 Shulker OS (each command has a man page):
 - Swarm: one main computer (10.42.0.1) hands out addresses, keeps the list of computers and runs orders. Workers ("Lab" computers, node1, node2, ...) join it and run jobs. Drones are OC2 robots (drone1, ...) linked by a tunnel card to a drone base (a Lab computer with up to 3 tunnel cards, `swarm base`); they report battery and position, go home to charge below 15-20 %, and use world coordinates once `drone origin X Y Z` is set. Orders: mine, home, go, run, map (swarm_order); computers never take drone pieces and drones never take computer pieces. The user's screen for all this is `control` (Control Center); `swarm status`, `swarm drones`, `swarm orders`, `swarm top` in the shell.
 - Updates and apps: the main updates from GitHub (`shulker update`), every other member updates from the main (`swarm run --on all shulker update`). `shulker mkdisk` on a spare computer writes ready Lab or Robot drives. `shulker disks setup` makes /data. `shulker linux kernel` installs the RAID kernel.
-- monitor: sensors and alarm rules (redstone alarms); dashboard: status wall on a projector; desktop: full-screen launcher; task: to-do list and scheduled jobs; netcfg: network; sshctl: SSH.
+- storage: inventories, tanks and energy on a computer's bus; `swarm find WORD` searches every computer (storage_find). OC2 reaches other mods' blocks (All the Mods: AE2, Refined Storage, Sophisticated Storage, Mekanism, Powah...) only as inventories, tanks and energy through bus interfaces: item counts, fluid levels and energy work for all of them; mod-specific functions (crafting requests, machine settings) do not.
+- monitor: sensors (energy, fluid.N, storage.N, redstone...) and alarm rules (redstone alarms); dashboard: status wall on a projector; desktop: full-screen launcher; task: to-do list and scheduled jobs; netcfg: network; sshctl: SSH.
+- Automatic updates: the main checks GitHub daily and every member follows it (`shulker autoupdate on|off`).
 - The internet goes through one Internet Gateway (reached at 10.42.0.254 in a swarm). HTTPS through BusyBox wget does not verify certificates.
 
 How to work:
@@ -401,6 +406,12 @@ function RUN.swarm_status(i)
         tonumber(x.mem_free) or 0, tonumber(x.mem_total) or 0, tostring(x.disk_free or "?"),
         n.main and " (main)" or "", x.energy and (" energy " .. x.energy .. "%") or "",
         (tonumber(x.alerts) or 0) > 0 and (" ALERTS " .. x.alerts) or "")
+      if type(x.devices) == "table" then
+        local parts = {}
+        for k, v in pairs(x.devices) do parts[#parts + 1] = v .. "x " .. k end
+        table.sort(parts)
+        if #parts > 0 then out[#out + 1] = "    bus: " .. table.concat(parts, ", ") end
+      end
     end
   end
   out[#out + 1] = "drones:"
@@ -438,6 +449,36 @@ function RUN.swarm_stop(i)
   local r, err = swarmCall({ op = "cancel", order = num(i.order, 0), stop = true })
   if not r then return err, true end
   return ("order %d: %d piece(s) stopped"):format(num(i.order, 0), r.cancelled), false
+end
+
+function RUN.storage_find(i)
+  local ST = require("shulker.storage")
+  local word = str(i.word, "")
+  local S = require("shulker.swarm")
+  local inSwarm = S.loadConf().role ~= nil
+  if (i.swarm == nil and inSwarm and word ~= "") or i.swarm == true then
+    local r, err = ST.swarmFind(swarmCall, word)
+    if not r then return err, true end
+    local out = { ("%d of %d computers answered"):format(r.answered, r.asked) }
+    for k, f in ipairs(r.list) do
+      if k > 40 then out[#out + 1] = "..." break end
+      local where = {}
+      for _, w in ipairs(f.where) do where[#where + 1] = w.host .. " " .. w.count end
+      out[#out + 1] = ("%d %s (%s)"):format(f.count, f.item, table.concat(where, ", "))
+    end
+    if #r.list == 0 then out[#out + 1] = "none found" end
+    return table.concat(out, "\n"), false
+  end
+  local list, err = ST.find(word)
+  if not list then return err, true end
+  local out = {}
+  for k, f in ipairs(list) do
+    if k > 60 then out[#out + 1] = "..." break end
+    local where = {}
+    for _, w in ipairs(f.where) do where[#where + 1] = w.name .. " " .. w.count end
+    out[#out + 1] = ("%d %s (%s)"):format(f.count, f.item, table.concat(where, ", "))
+  end
+  return #out > 0 and table.concat(out, "\n") or "none found on this computer", false
 end
 
 function RUN.monitor_status()

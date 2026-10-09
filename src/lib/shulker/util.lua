@@ -1,7 +1,7 @@
 -- Small helpers shared by every Shulker OS command.
 local M = {}
 
-M.VERSION = "0.1.0"
+M.VERSION = "1.0.0"
 
 ---------------------------------------------------------------- paths
 -- SHULKER_HOME: where the code lives (/opt/shulker, or /mnt/builtin/shulker from the data pack).

@@ -30,6 +30,27 @@ Sibling of [WardenOS](https://github.com/LinuxDino/WardenOS) for CC: Tweaked.
 - Install with one command, from the main computer over the network, or with a **data pack** that gives every OC2
   computer Shulker OS plus ready-made hard drives (Shulker OS, Swarm Node, Drone)
 
+## What you can build with it
+
+A swarm of 19 computers, 3 drones, a main and a projector in an All the Mods 11 world (or any NeoForge pack with
+OC2), using only what OC2 really exposes: inventories, tanks and energy of every mod, redstone, vanilla machines,
+robots.
+
+- **Control room**: `control` on the main, `dashboard start` on a projector wall: every computer, drone, order,
+  energy level and alarm on one screen
+- **Base storage at a glance**: bus interfaces on your AE2 / Refined Storage interfaces, Sophisticated Storage and
+  drawers on several computers; `swarm find diamond` answers from all of them at once
+- **Power and fluid alarms**: `monitor add low-power energy '<' 20 redstone:up` on the computer next to your Powah
+  / Mekanism cells, `monitor add tank-low fluid.1 '<' 10 ...` on tanks; alarms light lamps or ring bells by
+  redstone and show up on the main and the projector
+- **Mining with drones**: `mine X1 Y1 Z1 X2 Y2 Z2` splits a box between the drones; they charge themselves and
+  take over each other's slices
+- **Compute farm**: `map` and `run on all` spread work over 18 computers (`swarm bench`)
+- **Hands-off**: new versions reach every computer and drone by themselves (`shulker autoupdate`)
+
+Not possible through OC2: mod-specific functions such as AE2 crafting requests or machine settings (OC2 has no
+drivers for those mods), wireless robots (a tunnel card per robot, 3 robots per drone base computer).
+
 ## Install
 
 ### With internet (one command)
@@ -111,6 +132,19 @@ stop 3                         stop order 3, running pieces too
 Computers never take drone work and drones never take computer work; a lost piece goes to another drone. Tell
 each drone once where its charger is in the world (`swarm drone drone1 origin X Y Z`) and orders use world
 coordinates. The same from the shell: `swarm order ...`, `swarm orders`, `swarm stop ID`. See `man control`.
+
+## Storage from any mod
+
+`storage` lists every inventory, tank and energy store on a computer's bus, with fill levels and top items;
+`storage find WORD` says where an item is; `swarm find WORD` asks every computer at once and adds it up;
+`swarm devices` shows what each computer has on its bus. It works with any mod's blocks through a bus interface
+(chests, AE2 / Refined Storage interfaces, Sophisticated Storage, drawers, tanks, energy cells). See `man storage`.
+
+## Automatic updates
+
+The main checks GitHub once a day; every computer and drone compares its Shulker OS with the main's at each
+heartbeat and updates itself from the main when it is idle, then restarts its services. Only changed files are
+downloaded. `shulker autoupdate off` on the main stops it for the whole swarm.
 
 ## Monitor, alarms and the projector
 
@@ -217,12 +251,13 @@ Every command has a man page: `man <command>`, `man -l` lists them, start with `
 | --- | --- |
 | `desktop` | full-screen launcher |
 | `control` | Control Center: computers, drones, orders, command bar |
-| `swarm` | `init`, `join`, `status`, `top`, `run`, `map`, `jobs`, `drones`, `drone`, `base`, `bench` |
+| `swarm` | `init`, `join`, `status`, `top`, `run`, `map`, `order`, `find`, `devices`, `drones`, `drone`, `base`, `bench` |
 | `drone` | `status`, `go`, `move`, `turn`, `home`, `dig`, `place`, `scan`, `inspect` (on a drone) |
+| `storage` | inventories, tanks, energy from any mod; `find WORD` |
 | `monitor` | sensors, `add`/`rm` alert rules, `log`, `watch` |
 | `dashboard` | status wall on a projector, `start`/`stop` |
 | `task` | to-do list (todo.txt) and scheduled jobs (`task job`) |
-| `shulker` | `update`, `list`, `install`, `remove`, `doctor`, `setup`, `linux`, `disks`, `enable/disable claude` |
+| `shulker` | `update`, `autoupdate`, `list`, `install`, `remove`, `doctor`, `setup`, `linux`, `disks`, `mkdisk`, `slim` |
 | `shulkerfetch` | system info with the logo (also `neofetch`) |
 | `netcfg` | `auto`, `static IP/BITS [GW [DNS]]`, `dhcp`, `wizard` (OC2's setup-network.lua), `off`, `test` |
 | `sshctl` | `on`, `off`, `status`, `key 'ssh-ed25519 ...'` |

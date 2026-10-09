@@ -23,6 +23,7 @@ COMMANDS
   control        the Control Center: every computer, drone and order (`man control`)
   swarm          many computers working as one (`man swarm`)
   drone          robots as drones in the swarm (`man drone`)
+  storage        inventories, tanks and energy from any mod; swarm find (`man storage`)
   monitor        energy, redstone and machine sensors with alarms (`man monitor`)
   dashboard      a status wall on a projector (`man dashboard`)
   desktop        a full-screen launcher for everything here
