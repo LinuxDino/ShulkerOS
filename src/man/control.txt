@@ -16,6 +16,11 @@ DESCRIPTION
   Press : (or click the command bar) and type an order. It is split into
   pieces and the swarm works on them at the same time:
 
+    clear chunks CX CZ SIZE [TOP BOTTOM]
+                              clear SIZE x SIZE chunks (CX CZ from F3);
+                              chunk by chunk to every free drone, saved,
+                              shows an estimate first (see man drone)
+    clear X1 Z1 X2 Z2 [TOP BOTTOM]   the same with world coordinates
     mine X1 Y1 Z1 X2 Y2 Z2    dig out a box. Cut into slices of about 256
                               blocks, at least one per drone; every free
                               drone takes the next slice. A drone goes home

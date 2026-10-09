@@ -95,7 +95,7 @@ M.LIST = {
     description = "The Shulker Swarm this computer belongs to: every computer (online, load, memory, disk, current job, alerts), every drone (battery, world position, modules, base), and the orders with their progress and pieces. Use it before answering anything about the swarm, the nodes or the drones.",
     input_schema = obj({ order = INT("optional: one order's details, with each piece's output") }) },
   { name = "swarm_order", risky = true,
-    description = "Give the swarm an order; the main computer splits it into pieces that computers or drones work on at the same time. command is one of: 'mine X1 Y1 Z1 X2 Y2 Z2' (dig a box with all free drones, world coordinates), 'home all' or 'home DRONE...' (drones back to their chargers), 'go DRONE X Y Z', 'run on all CMD' / 'run on NAME CMD' / 'run CMD' (shell command on every / one / any free computer), \"map 'CMD {}' ITEM...\" (one piece per item on free computers). Returns the order number; follow it with swarm_status.",
+    description = "Give the swarm an order; the main computer splits it into pieces that computers or drones work on at the same time. command is one of: 'mine X1 Y1 Z1 X2 Y2 Z2' (dig a box with all free drones, world coordinates), 'home all' or 'home DRONE...' (drones back to their chargers), 'go DRONE X Y Z', 'clear chunks CX CZ SIZE [TOP BOTTOM]' or 'clear X1 Z1 X2 Z2 [TOP BOTTOM]' (clear a whole area chunk by chunk with all drones; shows an estimate), 'run on all CMD' / 'run on NAME CMD' / 'run CMD' (shell command on every / one / any free computer), \"map 'CMD {}' ITEM...\" (one piece per item on free computers). Returns the order number; follow it with swarm_status.",
     input_schema = obj({ command = STR("the order, e.g. mine 100 60 200 115 57 215") }, { "command" }) },
   { name = "swarm_stop", risky = true,
     description = "Stop an order: queued pieces are dropped and running ones are ended (drones stop where they are).",
@@ -440,8 +440,11 @@ function RUN.swarm_order(i)
   if not st then return err, true end
   local o, perr = O.parse(str(i.command, ""), st)
   if not o then return perr, true end
-  local r, oerr = swarmCall({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
+  local r, oerr = swarmCall({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces, campaign = o.campaign })
   if not r then return oerr, true end
+  if o.campaign then
+    return ("order %d started: %s; %d chunks x %d bands, handed to free drones; %s"):format(r.id, o.label, r.chunks, r.bands, o.note), false
+  end
   return ("order %d started: %s (%d pieces%s)"):format(r.id, o.label, #o.pieces, o.note and ("; " .. o.note) or ""), false
 end
 

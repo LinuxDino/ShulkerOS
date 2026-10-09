@@ -31,6 +31,9 @@ usage: drone status [--json]          energy, position, facing, modules
        drone calibrate                 make this spot the new start (0 0 0)
        drone origin [X Y Z]            where the start (charger spot) is in the world (F3)
        drone mine X1 Y1 Z1 X2 Y2 Z2   dig out that box, layer by layer; charges itself when low
+       drone clear X1 Y1 Z1 X2 Y2 Z2  clear the box fast (3 layers per pass), empties into its dump block
+       drone check                    is it ready for clearing: modules, pickaxes, dump block, origin
+       drone travel [Y]                height (world y) for trips home and out; default charger + 3
 see `man drone`]==]
 
 local a = arg
@@ -77,14 +80,14 @@ elseif cmd == "go" or cmd == "home" then
     if not (x and y and z) then U.die("drone: go X Y Z") end
     x, y, z = D.toLocal(x, y, z)
   end
-  local ok, why = D.go(x, y, z, dig)
+  local ok, why
+  if cmd == "home" then ok, why = D.goHome() else ok, why = D.go(x, y, z, dig) end
   if not ok then U.die("drone: " .. tostring(why) .. ", " .. report()) end
   print("arrived, " .. report())
 elseif cmd == "dig" or cmd == "place" then
-  local ops = D.module("block_operations")
-  if not ops then U.die("drone: needs a block operations module") end
-  local ok, res = pcall(cmd == "dig" and ops.excavate or ops.place, ops, a[2] or "front")
-  if not ok or not res then U.die("drone: " .. cmd .. " failed" .. (ok and "" or (": " .. tostring(res)))) end
+  if not D.module("block_operations") then U.die("drone: needs a block operations module") end
+  local ok = (cmd == "dig" and D.excavate or D.place)(a[2] or "front")
+  if not ok then U.die("drone: " .. cmd .. " failed") end
   print("ok")
 elseif cmd == "inspect" then
   local res, why = D.inspect(a[2])
@@ -110,6 +113,7 @@ elseif cmd == "mine" then
   local n = {}
   for i = 2, 7 do n[#n + 1] = tonumber(a[i] or "") end
   if #n < 6 then U.die("drone: mine X1 Y1 Z1 X2 Y2 Z2") end
+  if not D.origin() then U.die("drone: set its origin first: drone origin X Y Z (the charger spot, F3)") end
   if not D.module("block_operations") then U.die("drone: mining needs a block operations module") end
   local last = 0
   local done, why = D.mine(n[1], n[2], n[3], n[4], n[5], n[6], {
@@ -121,6 +125,51 @@ elseif cmd == "mine" then
   })
   if not done then U.die("drone: " .. tostring(why) .. ", " .. report()) end
   print(("done: %d blocks, %s"):format(done, report()))
+elseif cmd == "clear" then
+  local n = {}
+  for i = 2, 7 do n[#n + 1] = tonumber(a[i] or "") end
+  if #n < 6 then U.die("drone: clear X1 Y1 Z1 X2 Y2 Z2") end
+  -- world coordinates only: without an origin they would be read relative to the charger and the drone
+  -- would dig somewhere else entirely (maybe the base)
+  if not D.origin() then U.die("drone: set its origin first: drone origin X Y Z (the charger spot, F3)") end
+  local last = -1
+  local done, why = D.clear(n[1], n[2], n[3], n[4], n[5], n[6], {
+    log = function(m) print(m) io.flush() end,
+    progress = function(d, t)
+      local pct = math.floor(d / t * 100)
+      if pct >= last + 10 then last = pct - pct % 10 print(("progress %d%% (%d/%d)"):format(pct, d, t)) io.flush() end
+    end,
+  })
+  if not done then U.die("drone: " .. tostring(why) .. ", " .. report()) end
+  print(("cleared %d blocks, %s"):format(done, report()))
+elseif cmd == "travel" then
+  if a[2] then
+    local y = tonumber(a[2])
+    if not y then U.die("drone: travel Y (world height for trips home and out)") end
+    D.setTravel(y)
+  end
+  print(("travel height: %d (world y); keep the blocks above the charger free up to it"):format(
+    (D.origin() and D.origin().y or 0) + D.travelY()))
+elseif cmd == "check" then
+  local info = D.info()
+  local sl = D.slots()
+  local okAll = true
+  local function line(ok, text)
+    if not ok then okAll = false end
+    print((ok and c("ok", " ok ") or c("err", "FAIL")) .. "  " .. text)
+  end
+  local mods = {}
+  for _, m in ipairs(info.modules) do mods[m] = true end
+  line(mods.block_operations, "block operations module (digging)")
+  line(mods.inventory_operations, "inventory operations module (emptying)")
+  line(#sl.tools > 0, ("%d pickaxe%s in the inventory (spares are used when one wears out)"):format(#sl.tools, #sl.tools == 1 and "" or "s"))
+  local dumpOk = sl.dump ~= nil
+  print((dumpOk and c("ok", " ok ") or c("warn", "warn")) .. "  " .. (dumpOk and "dump block (trash can / ender chest) in slot " .. sl.dump or
+    "no dump block: it flies home to empty into the inventory north of its charger"))
+  line(D.origin() ~= nil, D.origin() and "origin set (world coordinates)" or "no origin: drone origin X Y Z (its charger spot, F3)")
+  line((info.charge or 0) >= 50, ("battery %s%%"):format(tostring(info.charge)))
+  print(okAll and c("ok", "ready to clear") or c("err", "not ready"))
+  os.exit(okAll and 0 or 1)
 elseif cmd == "calibrate" then
   r.calibrate()
   print("this spot is now 0 0 0")

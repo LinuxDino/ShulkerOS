@@ -251,7 +251,7 @@ function M.newLeader(conf)
 
   function L.addJob(cmd, target, timeout, group, order, label)
     local j = { id = L.nextJob, cmd = cmd, target = target or "any", state = "queued", created = os.time(),
-                timeout = math.min(tonumber(timeout) or 600, 3600), group = group, order = order, label = label }
+                timeout = math.min(tonumber(timeout) or 600, 14400), group = group, order = order, label = label }
     L.nextJob = L.nextJob + 1
     L.jobs[#L.jobs + 1] = j
     -- keep the last 400 jobs, but never drop unfinished ones
@@ -269,6 +269,138 @@ function M.newLeader(conf)
     for _, j in ipairs(L.jobs) do if j.id == tonumber(id) then return j end end
   end
 
+  ---------------------------------------------------------------- area campaigns (clear)
+  -- A campaign clears a big box: chunk columns (16x16, clipped to the box) in bands of 9 layers from the
+  -- top down. Pieces are made only when a drone is free, so a 25x25-chunk area doesn't create thousands
+  -- of jobs; a drone keeps its chunk until it reaches the bottom. Progress is saved to disk and survives
+  -- restarts of the main (an interrupted band is simply done again).
+  L.campaigns = {}
+  local campaignPath = U.etcdir() .. "/swarm-campaigns.json"
+  local function saveCampaigns()
+    local list = {}
+    for _, c in pairs(L.campaigns) do list[#list + 1] = c end
+    table.sort(list, function(a, b) return a.id < b.id end)
+    local copy = {}
+    for _, c in ipairs(list) do
+      local chunks = {}
+      for _, ch in ipairs(c.chunks) do
+        chunks[#chunks + 1] = { ch.x1, ch.z1, ch.x2, ch.z2, ch.band, ch.owner or "", ch.tries, ch.failed and 1 or 0 }
+      end
+      copy[#copy + 1] = { id = c.id, label = c.label, box = c.box, bands = json.array(c.bands), chunks = json.array(chunks),
+                          done = c.done, created = c.created, stopped = c.stopped and true or false }
+    end
+    U.write(campaignPath, json.encode(json.array(copy)), "600")
+  end
+  L.saveCampaigns = saveCampaigns
+
+  -- box = { x1, z1, x2, z2, top, bottom } in world coordinates
+  function L.newCampaign(id, label, box)
+    local x1, x2 = math.min(box.x1, box.x2), math.max(box.x1, box.x2)
+    local z1, z2 = math.min(box.z1, box.z2), math.max(box.z1, box.z2)
+    local top, bottom = math.max(box.top, box.bottom), math.min(box.top, box.bottom)
+    local bands = {}
+    local y = top
+    while y >= bottom do bands[#bands + 1] = { y, math.max(y - 8, bottom) } y = y - 9 end
+    local chunks = {}
+    for cx = x1 // 16, x2 // 16 do
+      for cz = z1 // 16, z2 // 16 do
+        chunks[#chunks + 1] = { x1 = math.max(x1, cx * 16), z1 = math.max(z1, cz * 16),
+                                x2 = math.min(x2, cx * 16 + 15), z2 = math.min(z2, cz * 16 + 15),
+                                band = 1, tries = 0 }
+      end
+    end
+    local c = { id = id, label = label, box = { x1 = x1, z1 = z1, x2 = x2, z2 = z2, top = top, bottom = bottom },
+                bands = bands, chunks = chunks, done = 0, created = os.time() }
+    L.campaigns[id] = c
+    saveCampaigns()
+    return c
+  end
+
+  function L.campaignTotal(c) return #c.chunks * #c.bands end
+
+  -- drones that keep failing (no pickaxe, stuck...) pause instead of spoiling chunk after chunk
+  L.droneFails = {}
+
+  -- the next piece of any active campaign for drone n (its own chunk first, then a free one)
+  function L.campaignPiece(n)
+    local f = L.droneFails[n.name]
+    if f and f.count >= 2 and os.time() < f.untilT then return nil end
+    local ids = {}
+    for id in pairs(L.campaigns) do ids[#ids + 1] = id end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+      local c = L.campaigns[id]
+      if not c.stopped then
+        local pickCh
+        for _, ch in ipairs(c.chunks) do
+          if ch.owner == n.name and not ch.job and not ch.failed and ch.band <= #c.bands then pickCh = ch break end
+        end
+        if not pickCh then
+          for _, ch in ipairs(c.chunks) do
+            if not ch.owner and not ch.job and not ch.failed and ch.band <= #c.bands and ch.lastFailedBy ~= n.name then
+              pickCh = ch break
+            end
+          end
+        end
+        if pickCh then
+          pickCh.owner = n.name
+          local b = c.bands[pickCh.band]
+          local j = L.addJob(("drone clear %d %d %d %d %d %d"):format(pickCh.x1, b[1], pickCh.z1, pickCh.x2, b[2], pickCh.z2),
+            n.name, 14400, "order-" .. c.id, c.id,
+            ("chunk %d,%d y%d..%d"):format(pickCh.x1 // 16, pickCh.z1 // 16, b[1], b[2]))
+          j.campaign, j.chunkRef = c.id, pickCh
+          pickCh.job = j.id
+          saveCampaigns()
+          return j
+        end
+      end
+    end
+  end
+
+  -- a campaign job ended (done, failed, lost or cancelled)
+  function L.jobEnded(j)
+    local c = j.campaign and L.campaigns[j.campaign]
+    local ch = j.chunkRef
+    if not c or not ch or ch.job ~= j.id then return end
+    ch.job = nil
+    local who = j.node
+    if j.state == "done" then
+      ch.band, ch.tries, ch.lastFailedBy = ch.band + 1, 0, nil
+      c.done = c.done + 1
+      if ch.band > #c.bands then ch.owner = nil end
+      if who then L.droneFails[who] = nil end
+    else
+      ch.tries, ch.owner, ch.lastFailedBy = ch.tries + 1, nil, who
+      if who and j.state ~= "lost" then
+        local f = L.droneFails[who] or { count = 0, untilT = 0 }
+        f.count = f.count + 1
+        if f.count >= 2 then
+          f.untilT = os.time() + 600
+          L.note(("%s failed %d pieces in a row: paused 10 min (check it: swarm drone %s check)"):format(who, f.count, who))
+        end
+        L.droneFails[who] = f
+      end
+      if ch.tries >= 3 then ch.failed = true L.note(("order %d: %s failed 3 times, skipped"):format(c.id, j.label or "")) end
+    end
+    saveCampaigns()
+  end
+
+  -- campaigns from before a restart
+  local savedCampaigns = json.decode(U.read(campaignPath) or "")
+  if type(savedCampaigns) == "table" then
+    for _, sc in ipairs(savedCampaigns) do
+      local c = { id = sc.id, label = sc.label, box = sc.box, bands = sc.bands, done = sc.done or 0,
+                  created = sc.created, stopped = sc.stopped, chunks = {} }
+      for _, t in ipairs(sc.chunks or {}) do
+        c.chunks[#c.chunks + 1] = { x1 = t[1], z1 = t[2], x2 = t[3], z2 = t[4], band = t[5],
+                                    owner = (t[6] ~= "" and t[6]) or nil, tries = t[7] or 0, failed = t[8] == 1 }
+      end
+      L.campaigns[c.id] = c
+      L.orders[#L.orders + 1] = { id = c.id, label = c.label, kind = "clear", created = c.created, group = "order-" .. c.id }
+      if c.id >= L.nextOrder then L.nextOrder = c.id + 1 end
+    end
+  end
+
   -- a node asks for work: its own jobs first, then the shared ones ("any" for computers, "drone" for drones)
   local function pick(n)
     if n.busy then return nil end
@@ -280,6 +412,7 @@ function M.newLeader(conf)
     for _, j in ipairs(L.jobs) do
       if j.state == "queued" and j.target == shared then return j end
     end
+    if isDrone(n) then return L.campaignPiece(n) end
   end
 
   -- jobs whose node vanished are queued again (once) or marked lost
@@ -297,6 +430,7 @@ function M.newLeader(conf)
           else
             j.state = "lost"
             j.finished = os.time()
+            L.jobEnded(j)
           end
           if n and n.busy == j.id then n.busy = nil end
         end
@@ -341,6 +475,7 @@ function M.newLeader(conf)
       if j and j.state == "running" and j.node == n.name then
         j.state = (tonumber(r.rc) == 0) and "done" or "failed"
         j.rc, j.out, j.finished = tonumber(r.rc), tostring(r.out or ""):sub(-M.MAX_OUTPUT), os.time()
+        L.jobEnded(j)
       end
       if n.busy == tonumber(r.id) then n.busy = nil end
     end
@@ -448,17 +583,35 @@ function M.newLeader(conf)
       local hit = msg.all or j.id == tonumber(msg.id) or (msg.order and j.order == tonumber(msg.order))
       if hit and j.state == "queued" then
         j.state, j.out, j.finished = "failed", "cancelled", os.time()
+        L.jobEnded(j)
         n = n + 1
       elseif hit and j.state == "running" and (msg.stop or msg.order) then
         j.stop = true
         n = n + 1
       end
     end
+    for id, c in pairs(L.campaigns) do
+      if msg.all or (msg.order and tonumber(msg.order) == id) then c.stopped = true saveCampaigns() end
+    end
     return { ok = true, cancelled = n }
   end
 
   -- order: { label, kind, pieces = { { cmd, target, label, timeout } } } -> one job per piece
   function H.order(msg)
+    if type(msg.campaign) == "table" then
+      local b = msg.campaign
+      for _, k in ipairs({ "x1", "z1", "x2", "z2", "top", "bottom" }) do
+        if not tonumber(b[k]) then return { error = "campaign box needs " .. k } end
+      end
+      local o = { id = L.nextOrder, label = tostring(msg.label or "clear"), kind = "clear", created = os.time() }
+      L.nextOrder = L.nextOrder + 1
+      o.group = "order-" .. o.id
+      local c = L.newCampaign(o.id, o.label, { x1 = tonumber(b.x1), z1 = tonumber(b.z1), x2 = tonumber(b.x2),
+        z2 = tonumber(b.z2), top = tonumber(b.top), bottom = tonumber(b.bottom) })
+      L.orders[#L.orders + 1] = o
+      L.note(("order %d: %s (%d chunks x %d bands)"):format(o.id, o.label, #c.chunks, #c.bands))
+      return { ok = true, id = o.id, chunks = #c.chunks, bands = #c.bands }
+    end
     if type(msg.pieces) ~= "table" or #msg.pieces == 0 then return { error = "an order needs pieces" } end
     local o = { id = L.nextOrder, label = tostring(msg.label or "order"), kind = tostring(msg.kind or "run"),
                 created = os.time() }
@@ -468,7 +621,10 @@ function M.newLeader(conf)
       L.addJob(tostring(p.cmd), p.target or "any", p.timeout or msg.timeout, o.group, o.id, p.label)
     end
     L.orders[#L.orders + 1] = o
-    while #L.orders > 30 do table.remove(L.orders, 1) end
+    local i = 1
+    while #L.orders > 30 and i <= #L.orders do
+      if L.campaigns[L.orders[i].id] then i = i + 1 else table.remove(L.orders, i) end
+    end
     L.note(("order %d: %s (%d pieces)"):format(o.id, o.label, #msg.pieces))
     return { ok = true, id = o.id }
   end
@@ -491,6 +647,22 @@ function M.newLeader(conf)
         local total = #pieces
         local state = counts.queued + counts.running > 0 and "running" or
           ((counts.failed + counts.lost > 0) and "failed" or "done")
+        local c = L.campaigns[o.id]
+        if c then
+          -- a campaign: progress counts bands of chunks; pieces lists only the work in hand
+          local failedBands, active = 0, {}
+          for _, ch in ipairs(c.chunks) do
+            if ch.failed then failedBands = failedBands + (#c.bands - ch.band + 1) end
+          end
+          for _, p in ipairs(pieces) do
+            if p.state == "running" or p.state == "queued" or (msg.id and p.state ~= "done") then active[#active + 1] = p end
+          end
+          total = L.campaignTotal(c)
+          counts = { done = c.done, running = counts.running, queued = total - c.done - failedBands - counts.running,
+                     failed = failedBands, lost = 0 }
+          state = c.stopped and "stopped" or (c.done + failedBands >= total and (failedBands > 0 and "failed" or "done") or "running")
+          pieces = active
+        end
         out[#out + 1] = { id = o.id, label = o.label, kind = o.kind, created = o.created, total = total,
                           counts = counts, state = state, pieces = json.array(pieces) }
       end

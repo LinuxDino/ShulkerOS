@@ -393,9 +393,14 @@ elseif cmd == "order" then
   local status = call({ op = "status" })
   local o, err = O.parse(line, status)
   if not o then U.die("swarm: " .. err) end
-  local r = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
-  print(("order %d: %s, %d piece%s%s"):format(r.id, o.label, #o.pieces, #o.pieces == 1 and "" or "s",
-    o.note and (" (" .. o.note .. ")") or ""))
+  local r = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces, campaign = o.campaign })
+  if o.campaign then
+    print(("order %d: %s, %d chunks x %d bands, handed to drones as they are free"):format(r.id, o.label, r.chunks, r.bands))
+    print("  " .. o.note)
+  else
+    print(("order %d: %s, %d piece%s%s"):format(r.id, o.label, #o.pieces, #o.pieces == 1 and "" or "s",
+      o.note and (" (" .. o.note .. ")") or ""))
+  end
   print("follow it with `swarm orders " .. r.id .. "` or in `control`")
 elseif cmd == "devices" then
   local st = call({ op = "status" })

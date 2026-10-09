@@ -12,6 +12,8 @@ local U = require("shulker.util")
 local M = {}
 
 M.HELP = {
+  "clear chunks CX CZ SIZE [TOP BOTTOM]   clear SIZExSIZE chunks from chunk CX,CZ (F3)",
+  "clear X1 Z1 X2 Z2 [TOP BOTTOM]         clear a box in world coordinates",
   "mine X1 Y1 Z1 X2 Y2 Z2    dig a box; split between all free drones",
   "home [all|DRONE...]       drones back to their chargers",
   "go DRONE X Y Z            send one drone somewhere",
@@ -73,12 +75,70 @@ function M.planMine(b, nDrones, perPiece)
   return pieces, volume
 end
 
+-- blocks per hour one drone clears, all included (3 layers per pass, dumping, charging): an estimate
+M.CLEAR_RATE = 2400
+M.DEFAULT_TOP, M.DEFAULT_BOTTOM = 128, -59      -- bedrock starts below -59
+
+function M.estimate(blocks, drones)
+  local h = blocks / (M.CLEAR_RATE * math.max(1, drones))
+  if h < 1 then return ("about %d minutes"):format(math.max(1, math.floor(h * 60 + 0.5))) end
+  if h < 48 then return ("about %.0f hours"):format(h) end
+  return ("about %.0f days (%.0f hours)"):format(h / 24, h)
+end
+
+-- clear: a campaign the main hands out chunk by chunk (see swarm.lua); world coordinates
+local function clearOrder(w, status)
+  local n = {}
+  local i = 2
+  local byChunks = w[2] == "chunks" or w[2] == "chunk"
+  if byChunks then i = 3 end
+  for k = i, #w do
+    local v = tonumber(w[k])
+    if not v then return nil, "clear: numbers only after " .. (byChunks and "clear chunks" or "clear") end
+    n[#n + 1] = math.floor(v)
+  end
+  local x1, z1, x2, z2, top, bottom
+  if byChunks then
+    -- CX CZ SIZE [TOP BOTTOM]  or  CX1 CZ1 CX2 CZ2 TOP BOTTOM
+    if #n == 3 or #n == 5 then
+      x1, z1, x2, z2 = n[1] * 16, n[2] * 16, (n[1] + n[3]) * 16 - 1, (n[2] + n[3]) * 16 - 1
+      top, bottom = n[4], n[5]
+      if n[3] < 1 then return nil, "clear chunks: SIZE must be at least 1" end
+    elseif #n == 6 then
+      x1, z1 = math.min(n[1], n[3]) * 16, math.min(n[2], n[4]) * 16
+      x2, z2 = (math.max(n[1], n[3]) + 1) * 16 - 1, (math.max(n[2], n[4]) + 1) * 16 - 1
+      top, bottom = n[5], n[6]
+    else
+      return nil, "clear chunks CX CZ SIZE [TOP BOTTOM]   (CX CZ: the chunk on the F3 screen)"
+    end
+  else
+    if #n ~= 4 and #n ~= 6 then return nil, "clear X1 Z1 X2 Z2 [TOP BOTTOM]   (two corners, world coordinates)" end
+    x1, z1, x2, z2, top, bottom = n[1], n[2], n[3], n[4], n[5], n[6]
+  end
+  top, bottom = top or M.DEFAULT_TOP, bottom or M.DEFAULT_BOTTOM
+  if top < bottom then top, bottom = bottom, top end
+  local sx, sz = math.abs(x2 - x1) + 1, math.abs(z2 - z1) + 1
+  local blocks = sx * sz * (top - bottom + 1)
+  local ds = drones(status)
+  local chunksX = (math.max(x1, x2) // 16) - (math.min(x1, x2) // 16) + 1
+  local chunksZ = (math.max(z1, z2) // 16) - (math.min(z1, z2) // 16) + 1
+  local note = ("%d blocks, %d chunks; %s with %d drone%s"):format(blocks, chunksX * chunksZ,
+    M.estimate(blocks, #ds), #ds, #ds == 1 and "" or "s")
+  if #ds < 50 then note = note .. ", " .. M.estimate(blocks, 50) .. " with 50" end
+  return { kind = "clear", pieces = {}, note = note,
+           campaign = { x1 = x1, z1 = z1, x2 = x2, z2 = z2, top = top, bottom = bottom },
+           label = ("clear %dx%d x%d (%d %d .. %d %d, y %d..%d)"):format(sx, sz, top - bottom + 1, x1, z1, x2, z2, top, bottom) }
+end
+M.clearOrder = clearOrder
+
 -- parse a command into an order; status (from the main node) tells which drones/computers exist
 function M.parse(line, status)
   local w, err = M.words(line)
   if not w then return nil, err end
   local verb = (w[1] or ""):lower()
   if verb == "" then return nil, "type a command (help lists them)" end
+
+  if verb == "clear" then return clearOrder(w, status) end
 
   if verb == "mine" then
     local b = {}

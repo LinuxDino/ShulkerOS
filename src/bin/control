@@ -251,7 +251,7 @@ local function runCommand(line)
   end
   local o, e = O.parse(line, status)
   if not o then say(e, "pink") return end
-  local r, e2 = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces })
+  local r, e2 = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces, campaign = o.campaign })
   if not r then say(e2, "pink") return end
   say(("order #%d started: %s%s"):format(r.id, o.label, o.note and (" (" .. o.note .. ")") or ""), "lime")
   refresh()

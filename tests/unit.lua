@@ -472,6 +472,216 @@ test("storage: inventories, tanks, find, swarm find (fake bus)", function()
   devices.list, devices.bus = realList, realBus
 end)
 
+test("clear: chunk coordinates, campaign pieces, ownership, retries, restart", function()
+  local O = require("shulker.orders")
+  local st = { nodes = { { name = "drone1", online = true, stats = { drone = { charge = 90 } } } } }
+  local o = O.parse("clear chunks 10 -3 25 80 -59", st)
+  eq(o.kind, "clear") eq(o.campaign.x1, 160) eq(o.campaign.z1, -48) eq(o.campaign.x2, 559) eq(o.campaign.z2, 351)
+  eq(o.campaign.top, 80) eq(o.campaign.bottom, -59)
+  truthy(o.note:find("625 chunks", 1, true), o.note)
+  local o2 = O.parse("clear chunks 0 0 1 1 64 60", st)
+  eq(o2.campaign.x2, 31) eq(o2.campaign.z2, 31)
+  local o3 = O.parse("clear 5 5 20 7", st)
+  eq(o3.campaign.top, O.DEFAULT_TOP) eq(o3.campaign.bottom, O.DEFAULT_BOTTOM)
+  truthy(select(2, O.parse("clear chunks 1 2", st)), "too few numbers are refused")
+
+  local S = require("shulker.swarm")
+  os.remove(U.etcdir() .. "/swarm-campaigns.json")
+  local L = S.newLeader({ token = "t" })
+  L.enrollUntil = os.time() + 60
+  local function dr(mac, charge) return { mac = mac, ip = "10.43.1.9", drone = { charge = charge or 90 } } end
+  L.handle({ op = "join", stats = dr("d1") })
+  L.handle({ op = "join", stats = dr("d2") })
+  L.handle({ op = "join", stats = { mac = "c1", ip = "10.42.0.9" } })
+  -- 2 x 1 chunks (x 0..31, z 0..15), y 64..55: two bands of 9 and 1 layer
+  local r = L.handle({ op = "order", token = "t", label = "clear test", campaign = { x1 = 0, z1 = 0, x2 = 31, z2 = 15, top = 64, bottom = 55 } })
+  eq(r.chunks, 2) eq(r.bands, 2)
+  eq(L.handle({ op = "heartbeat", token = "t", stats = { mac = "c1", ip = "x" } }).job, nil, "computers get no clear pieces")
+  local h1 = L.handle({ op = "heartbeat", token = "t", stats = dr("d1") })
+  eq(h1.job.cmd, "drone clear 0 64 0 15 56 15")
+  local h2 = L.handle({ op = "heartbeat", token = "t", stats = dr("d2") })
+  eq(h2.job.cmd, "drone clear 16 64 0 31 56 15", "the second drone gets the other chunk")
+  -- d1 finishes its band: it gets the next band of the same chunk
+  local h1b = L.handle({ op = "heartbeat", token = "t", stats = dr("d1"), results = json.array({ { id = h1.job.id, rc = 0, out = "ok" } }) })
+  eq(h1b.job.cmd, "drone clear 0 55 0 15 55 15")
+  local ord = L.handle({ op = "orders", token = "t" }).orders[1]
+  eq(ord.total, 4) eq(ord.counts.done, 1) eq(ord.state, "running")
+  -- d2 fails: its chunk goes back to the pool and the next free drone takes the same band
+  L.handle({ op = "heartbeat", token = "t", stats = dr("d2"), results = json.array({ { id = h2.job.id, rc = 1, out = "stuck" } }) })
+  local h1c = L.handle({ op = "heartbeat", token = "t", stats = dr("d1"), results = json.array({ { id = h1b.job.id, rc = 0, out = "ok" } }) })
+  eq(h1c.job.cmd, "drone clear 16 64 0 31 56 15", "a failed band is done again by another drone")
+  -- the main restarts: the campaign comes back, the band in hand is handed out again
+  local L2 = S.newLeader({ token = "t" })
+  L2.enrollUntil = os.time() + 60
+  L2.handle({ op = "join", stats = dr("d1") })
+  local ord2 = L2.handle({ op = "orders", token = "t" }).orders[1]
+  eq(ord2.total, 4) eq(ord2.counts.done, 2)
+  eq(L2.handle({ op = "heartbeat", token = "t", stats = dr("d1") }).job.cmd, "drone clear 16 64 0 31 56 15")
+  -- stop: no more pieces
+  L2.handle({ op = "cancel", token = "t", order = ord2.id, stop = true })
+  L2.handle({ op = "join", stats = dr("d2") })
+  eq(L2.handle({ op = "heartbeat", token = "t", stats = dr("d2") }).job, nil, "a stopped campaign hands out nothing")
+  eq(L2.handle({ op = "orders", token = "t" }).orders[1].state, "stopped")
+  os.remove(U.etcdir() .. "/swarm-campaigns.json")
+end)
+
+-- a simulated OC2 robot: world of blocks, 12 slots, pickaxe wear, trash can, the module APIs drone.lua uses
+local function simRobot(opts)
+  local W = { solid = {}, pos = { x = 0, y = 0, z = 0 }, facing = "north", dropped = 0, inv = {}, sel = 0,
+              digs = 0, trashed = 0, clock = 0, cd = 0 }
+  local function key(x, y, z) return x .. "," .. y .. "," .. z end
+  for x = opts.box[1], opts.box[4] do for y = opts.box[2], opts.box[5] do for z = opts.box[3], opts.box[6] do
+    W.solid[key(x, y, z)] = "minecraft:stone"
+  end end end
+  for i, st in pairs(opts.inv) do W.inv[i] = st end
+  local D = { north = { 0, -1 }, south = { 0, 1 }, east = { 1, 0 }, west = { -1, 0 } }
+  local ORDER = { "north", "east", "south", "west" }
+  local function target(side)
+    local p = W.pos
+    if side == "up" or side == "upward" then return p.x, p.y + 1, p.z end
+    if side == "down" or side == "downward" then return p.x, p.y - 1, p.z end
+    local d = D[W.facing]
+    if side == "backward" then return p.x - d[1], p.y, p.z - d[2] end
+    return p.x + d[1], p.y, p.z + d[2]
+  end
+  local function insert(id)
+    for k = 1, 12 do
+      local s = (W.sel + k) % 12
+      local st = W.inv[s]
+      if not st then W.inv[s] = { id = id, count = 1 } return end
+      if st.id == id and st.count < 64 and not st.tool then st.count = st.count + 1 return end
+    end
+    W.dropped = W.dropped + 1
+  end
+  local robot = {
+    position = function() return { x = W.pos.x, y = W.pos.y, z = W.pos.z } end,
+    facing = function() return W.facing end,
+    energy = function() return 1000 end, capacity = function() return 1000 end,
+    slot = function(v) if v then W.sel = v end return W.sel end,
+    stack = function(s) local st = W.inv[s or W.sel] return st and { id = st.id, count = st.count } or nil end,
+    detect = function(side) return W.solid[key(target(side))] ~= nil end,
+    turn = function(dir)
+      local i
+      for k, v in ipairs(ORDER) do if v == W.facing then i = k end end
+      W.facing = ORDER[(i - 1 + (dir == "right" and 1 or -1)) % 4 + 1]
+      return true
+    end,
+    move = function(dir)
+      local x, y, z = target(dir)
+      if W.solid[key(x, y, z)] then return false end
+      W.pos = { x = x, y = y, z = z }
+      W.clock = W.clock + 1                       -- OC2: one block per second
+      return true
+    end,
+  }
+  local blockOps = {
+    excavate = function(_, side)
+      if W.clock < W.cd then return false end     -- OC2: refused during the cooldown
+      W.cd = W.clock + 1
+      local x, y, z = target(side or "front")
+      local b = W.solid[key(x, y, z)]
+      if not b then return false end
+      local tool = W.inv[W.sel]
+      if not tool or not tool.tool or tool.dur <= 0 then return false end
+      tool.dur = tool.dur - 1
+      if tool.dur <= 0 then W.inv[W.sel] = nil end
+      W.solid[key(x, y, z)] = nil
+      W.digs = W.digs + 1
+      insert(b == "minecraft:stone" and "minecraft:cobblestone" or b)
+      return true
+    end,
+    place = function(_, side)
+      if W.clock < W.cd then return false end
+      W.cd = W.clock + 1
+      local st = W.inv[W.sel]
+      local x, y, z = target(side or "front")
+      if not st or st.tool or W.solid[key(x, y, z)] then return false end
+      W.solid[key(x, y, z)] = st.id
+      st.count = st.count - 1
+      if st.count == 0 then W.inv[W.sel] = nil end
+      return true
+    end,
+    durability = function() local t = W.inv[W.sel] return t and t.tool and t.dur or nil end,
+  }
+  local invOps = {
+    getItemSlotCount = function(_, side)
+      local b = W.solid[key(target(side or "front"))]
+      return (b == "trashcans:trash_can" or b == "minecraft:chest") and 27 or 0
+    end,
+    drop = function(_, count, side)
+      local st = W.inv[W.sel]
+      if not st then return 0 end
+      local n = math.min(count, st.count)
+      local x, y, z = target(side or "front")
+      local b = W.solid[key(x, y, z)]
+      if b == "trashcans:trash_can" or b == "minecraft:chest" then W.trashed = W.trashed + n
+      else W.dropped = W.dropped + n end
+      st.count = st.count - n
+      if st.count == 0 then W.inv[W.sel] = nil end
+      return n
+    end,
+  }
+  local mods = { block_operations = blockOps, inventory_operations = invOps }
+  local devices = require("shulker.devices")
+  devices.bus = function() return { find = function(_, name) return mods[name] end } end
+  package.loaded["robot"] = robot
+  package.loaded["shulker.drone"] = nil
+  local Dr = require("shulker.drone")
+  Dr.sleep = function(sec) W.clock = W.clock + sec end
+  W.box = opts.box
+  W.remaining = function()
+    local n = 0
+    for x = opts.box[1], opts.box[4] do for y = opts.box[2], opts.box[5] do for z = opts.box[3], opts.box[6] do
+      if W.solid[key(x, y, z)] and W.solid[key(x, y, z)] ~= "trashcans:trash_can" then n = n + 1 end
+    end end end
+    return n
+  end
+  return W, Dr
+end
+
+test("drone clear (simulated robot): every block, nothing on the ground, dump block, spare pickaxe", function()
+  local realBus = require("shulker.devices").bus
+  -- 10 x 6 x 10 box (600 blocks: the inventory fills several times); a worn pickaxe, a spare, a trash can
+  local W, Dr = simRobot({ box = { 2, -6, -12, 11, -1, -3 }, inv = {
+    [0] = { id = "minecraft:diamond_pickaxe", count = 1, tool = true, dur = 60 },
+    [1] = { id = "trashcans:trash_can", count = 1 },
+    [2] = { id = "minecraft:netherite_pickaxe", count = 1, tool = true, dur = 5000 } } })
+  local n, err = Dr.clear(2, -6, -12, 11, -1, -3, {})
+  eq(err, nil) eq(n, 600)
+  eq(W.remaining(), 0, "every block of the box is gone")
+  local rate = 600 / W.clock * 3600
+  print(("        (simulated: 600 blocks in %.0f s = %.0f blocks/hour)"):format(W.clock, rate))
+  truthy(rate > 1800 and rate < 4000, "speed fits the estimate (about 2,400/h)")
+  eq(W.dropped, 0, "nothing was dropped on the ground")
+  truthy(W.trashed > 0, "the trash can was used")
+  local sl = Dr.slots()
+  truthy(sl.dump ~= nil, "the trash can came back into the inventory")
+  eq(#sl.tools, 2, "the worn pickaxe is kept (repairable), not broken")
+  truthy(W.inv[0].dur <= 8 and W.inv[0].dur > 0, "it stopped using the worn one in time")
+  truthy(W.inv[2].dur < 5000, "the spare took over")
+  -- without a dump block and without a chest at home it stops instead of littering
+  local W2, Dr2 = simRobot({ box = { 1, 0, -12, 10, 5, -3 }, inv = {
+    [0] = { id = "minecraft:netherite_pickaxe", count = 1, tool = true, dur = 5000 } } })
+  local n2, err2 = Dr2.clear(1, 0, -12, 10, 5, -3, {})
+  eq(n2, nil) truthy(tostring(err2):find("chest north of its charger"), err2)
+  eq(W2.dropped, 0, "nothing littered at home")
+  -- with a chest north of the charger it empties there and finishes
+  local W3, Dr3b = simRobot({ box = { 1, 0, -12, 10, 5, -3 }, inv = {
+    [0] = { id = "minecraft:netherite_pickaxe", count = 1, tool = true, dur = 5000 } } })
+  W3.solid["0,0,-1"] = "minecraft:chest"
+  local n3b, err3b = Dr3b.clear(1, 0, -12, 10, 5, -3, {})
+  eq(err3b, nil) eq(n3b, 600) eq(W3.remaining(), 0) eq(W3.dropped, 0) truthy(W3.trashed > 0)
+  eq(W3.solid["0,0,-1"], "minecraft:chest", "the chest next to the charger is never dug up")
+  eq(W3.pos.x .. "," .. W3.pos.z, "10,-12", "it finished at the end of the box")
+  -- no pickaxe: refuses at once
+  local _, Dr3 = simRobot({ box = { 1, 0, 1, 1, 0, 1 }, inv = {} })
+  local n3, err3 = Dr3.clear(1, 0, 1, 1, 0, 1, {})
+  eq(n3, nil) truthy(tostring(err3):find("pickaxe"))
+  require("shulker.devices").bus = realBus
+  package.loaded["robot"] = nil
+  package.loaded["shulker.drone"] = nil
+end)
+
 os.execute("rm -rf " .. U.q(tmp))
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

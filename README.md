@@ -43,8 +43,10 @@ robots.
 - **Power and fluid alarms**: `monitor add low-power energy '<' 20 redstone:up` on the computer next to your Powah
   / Mekanism cells, `monitor add tank-low fluid.1 '<' 10 ...` on tanks; alarms light lamps or ring bells by
   redstone and show up on the main and the projector
-- **Mining with drones**: `mine X1 Y1 Z1 X2 Y2 Z2` splits a box between the drones; they charge themselves and
-  take over each other's slices
+- **Clearing land with drones**: `clear chunks 10 -3 25` clears 25x25 chunks from chunk 10,-3 (F3); the main
+  hands every free drone a chunk, drones dig 3 layers per pass, empty into a trash can or ender chest they
+  carry, swap pickaxes, charge, and the order survives restarts. About 2,400 blocks/hour per drone: plan the
+  number of drones by the estimate it shows (`man drone`)
 - **Compute farm**: `map` and `run on all` spread work over 18 computers (`swarm bench`)
 - **Hands-off**: new versions reach every computer and drone by themselves (`shulker autoupdate`)
 
