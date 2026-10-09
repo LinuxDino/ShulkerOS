@@ -94,7 +94,7 @@ local function swarmData()
   if not okS or not U.exists(swarm.confPath()) then return nil end
   local conf = swarm.loadConf()
   if conf.role ~= "main" then return { role = conf.role or "worker", leader = swarm.leaderOf(conf) } end
-  local st = swarm.call(setmetatable({ leader = "127.0.0.1" }, { __index = conf }), { op = "status" }, 2)
+  local st = swarm.call(setmetatable({ leader = "127.0.0.1" }, { __index = conf }), { op = "status", compact = true }, 5)
   if not st then return { role = "main", down = true } end
   return { role = "main", nodes = st.nodes or {}, queued = st.queued, running = st.running }
 end

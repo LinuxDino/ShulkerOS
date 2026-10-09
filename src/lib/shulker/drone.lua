@@ -40,8 +40,9 @@ function M.position()
   return { x = tonumber(p.x) or 0, y = tonumber(p.y) or 0, z = tonumber(p.z) or 0 }
 end
 
--- a small status table for heartbeats and `drone status`
-function M.info()
+-- a small status table for heartbeats and `drone status`; light = battery and position only
+-- (the module list costs one bus call per module type, so heartbeats ask for it now and then)
+function M.info(light)
   local r = M.robot()
   if not r then return nil end
   local info = {}
@@ -49,6 +50,12 @@ function M.info()
   pcall(function() info.capacity = tonumber(r.capacity()) end)
   pcall(function() info.facing = r.facing() end)
   info.pos = M.position()
+  if light then
+    if info.energy and info.capacity and info.capacity > 0 then
+      info.charge = math.floor(info.energy / info.capacity * 100 + 0.5)
+    end
+    return info
+  end
   pcall(function() info.slot = r.slot() end)
   local mods = {}
   for _, m in ipairs({ "scanner", "block_operations", "inventory_operations", "tank_operations", "crafting" }) do

@@ -16,8 +16,13 @@ M.PORT = 4242
 M.SUBNET = "10.42.0"
 M.LEADER_IP = "10.42.0.1"
 M.GATEWAY_IP = "10.42.0.254"       -- an Internet Gateway on the swarm network answers here
-M.HEARTBEAT = 3                    -- seconds between worker heartbeats
-M.DEAD_AFTER = 15                  -- a node not heard from for this long is shown as offline
+-- A hub passes 32 frames a tick (640/s) and one request costs ~12 frames: 140 members beating every
+-- second would need ~1,700 frames/s and drop packets. At 8-10 s it is ~220 frames/s for 22 computers
+-- and 120 drones. Finished jobs are still reported at once (see swarmd).
+M.HEARTBEAT = 8                    -- seconds between heartbeats of a node at work (idle: BEAT_IDLE)
+M.BEAT_IDLE = 10                   -- an idle node
+M.FULL_EVERY = 60                  -- full statistics (disk, bus, version...) this often, else a light beat
+M.DEAD_AFTER = 45                  -- a node not heard from for this long is shown as offline
 M.MAX_OUTPUT = 8192                -- bytes of job output kept
 
 ---------------------------------------------------------------- config
@@ -105,7 +110,14 @@ function M.findUplink(conf)
   return nil
 end
 
-function M.ip()
+local ipCache, ipAt = nil, 0
+function M.ip(fresh)
+  if not fresh and ipCache and os.time() - ipAt < 30 then return ipCache end
+  ipCache, ipAt = M.ipNow(), os.time()
+  return ipCache
+end
+
+function M.ipNow()
   local conf = M.loadConf()
   if conf.base == "1" then
     local up = M.uplink(conf)
@@ -116,14 +128,14 @@ end
 
 -- robots report energy, position and modules (nil on normal computers; checked once)
 local isRobot
-function M.droneInfo()
+function M.droneInfo(light)
   if isRobot == false then return nil end
   -- swarmd runs all the time: it must reach the robot through OC2's bus daemon only (see devices.lua)
   require("shulker.devices").daemonOnly = true
   if not U.exists("/run/oc2/bus") then return nil end
   local ok, D = pcall(require, "shulker.drone")
   if not ok then isRobot = false return nil end
-  local info = D.isDrone() and D.info() or nil
+  local info = D.isDrone() and D.info(light) or nil
   if not info then isRobot = false return nil end
   -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
   local o = D.origin()
@@ -132,10 +144,15 @@ function M.droneInfo()
 end
 
 -- the leader address: "auto" = whoever gave us our address (the main node, or a drone base)
+local gwCache, gwAt = nil, 0
 function M.leaderOf(conf)
   if conf.leader and conf.leader ~= "auto" then return conf.leader end
-  local gw = U.capture("ip route 2>/dev/null"):match("default via (%d+%.%d+%.%d+%.%d+)")
-  return gw or M.LEADER_IP
+  -- a drone's main is reached through its base, its default gateway (asked at most every 30 s)
+  if not gwCache or os.time() - gwAt >= 30 then
+    gwCache = U.capture("ip route 2>/dev/null"):match("default via (%d+%.%d+%.%d+%.%d+)")
+    gwAt = os.time()
+  end
+  return gwCache or M.LEADER_IP
 end
 
 -- a small status report: what the leader and the dashboards show
@@ -157,12 +174,23 @@ function M.busSummary()
   return count
 end
 
-function M.stats()
+-- full: everything (every FULL_EVERY s); otherwise a light beat the main merges into what it has
+function M.stats(full)
+  if full == nil then full = true end
   local okM, monitor = pcall(require, "shulker.monitor")
   local mon = okM and monitor.state(30)
   local meminfo = U.read("/proc/meminfo") or ""
   local total = tonumber(meminfo:match("MemTotal:%s*(%d+)")) or 0
   local avail = tonumber(meminfo:match("MemAvailable:%s*(%d+)")) or 0
+  local rx0, tx0 = (U.read("/proc/net/dev") or ""):match("eth0:%s*(%d+)%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+(%d+)")
+  if not full then
+    return {
+      mac = M.mac(), ip = M.ip(), load = readNum("/proc/loadavg", "^(%S+)") or 0, mem_free = avail,
+      rx = tonumber(rx0), tx = tonumber(tx0), drone = M.droneInfo(true),
+      energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
+      alerts = mon and #(mon.alerts or {}) or nil,
+    }
+  end
   local df = U.capture("df -k / | tail -n 1")
   local rx, tx = (U.read("/proc/net/dev") or ""):match("eth0:%s*(%d+)%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+%d+%s+(%d+)")
   local f = {}
@@ -417,10 +445,11 @@ function M.newLeader(conf)
 
   -- jobs whose node vanished are queued again (once) or marked lost
   function L.reap()
+    local byName = {}
+    for _, x in pairs(L.nodes) do byName[x.name] = x end
     for _, j in ipairs(L.jobs) do
       if j.state == "running" then
-        local n
-        for _, x in pairs(L.nodes) do if x.name == j.node then n = x end end
+        local n = byName[j.node]
         local overdue = j.started and os.time() - j.started > j.timeout + 60
         if not n or not online(n) or overdue then
           local tries = j.retried == true and 1 or (tonumber(j.retried) or 0)
@@ -468,7 +497,25 @@ function M.newLeader(conf)
       n.rxRate = math.max(0, (msg.stats.rx - n.stats.rx) / dt)
       n.txRate = math.max(0, (msg.stats.tx - n.stats.tx) / dt)
     end
-    n.seen, n.stats, n.ip, n.via = now, msg.stats, msg.stats.ip, msg.via
+    if msg.light and type(n.stats) == "table" then
+      -- a light beat: merge into the last full statistics (a drone keeps its module list)
+      local merged = {}
+      for k, v in pairs(n.stats) do merged[k] = v end
+      for k, v in pairs(msg.stats) do
+        if k == "drone" and type(v) == "table" and type(merged.drone) == "table" then
+          local d = {}
+          for dk, dv in pairs(merged.drone) do d[dk] = dv end
+          for dk, dv in pairs(v) do d[dk] = dv end
+          merged.drone = d
+        else
+          merged[k] = v
+        end
+      end
+      n.stats = merged
+    else
+      n.stats = msg.stats
+    end
+    n.seen, n.ip, n.via = now, msg.stats.ip or n.ip, msg.via
     -- results of finished jobs
     for _, r in ipairs(msg.results or {}) do
       local j = L.job(r.id)
@@ -498,11 +545,20 @@ function M.newLeader(conf)
     return reply
   end
 
-  function H.status()
+  -- compact = true: only what the Control Center, dashboard and monitor show (small replies, fast)
+  local function compactStats(st)
+    if type(st) ~= "table" then return nil end
+    local d = type(st.drone) == "table" and { charge = st.drone.charge, pos = st.drone.pos, world = st.drone.world } or nil
+    return { load = st.load, alerts = st.alerts, energy = st.energy, drone = d }
+  end
+
+  function H.status(msg)
+    local compact = msg and msg.compact
     local nodes = {}
     for _, n in pairs(L.nodes) do
-      nodes[#nodes + 1] = { name = n.name, mac = n.mac, ip = n.ip, online = online(n), busy = n.busy,
-                            seen = n.seen and (os.time() - n.seen) or nil, stats = n.stats,
+      nodes[#nodes + 1] = { name = n.name, mac = not compact and n.mac or nil, ip = n.ip, online = online(n), busy = n.busy,
+                            seen = n.seen and (os.time() - n.seen) or nil,
+                            stats = compact and compactStats(n.stats) or n.stats,
                             rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac, via = n.via }
     end
     table.sort(nodes, function(a, b)
@@ -515,7 +571,8 @@ function M.newLeader(conf)
     local gw = U.trim(U.read("/tmp/swarm-gateway") or "")
     return { ok = true, nodes = json.array(nodes), queued = q, running = r, gateway = gw ~= "" and gw or "unknown",
              leader = { ip = M.ip(), host = U.trim(U.read("/etc/hostname") or "") },
-             enrolling = math.max(0, L.enrollUntil - os.time()), log = json.array(L.log) }
+             enrolling = math.max(0, L.enrollUntil - os.time()),
+             log = json.array(compact and { L.log[1], L.log[2], L.log[3], L.log[4], L.log[5], L.log[6] } or L.log) }
   end
 
   -- submit: { cmd, target = "any"|"all"|name, timeout } or { map = {items}, cmd with {} }
@@ -645,6 +702,13 @@ function M.newLeader(conf)
           end
         end
         local total = #pieces
+        if not msg.id and #pieces > 40 then
+          -- list mode: the work in hand first, at most 40 (an order with hundreds of pieces stays small)
+          local keep = {}
+          for _, p in ipairs(pieces) do if p.state == "running" then keep[#keep + 1] = p end end
+          for _, p in ipairs(pieces) do if #keep < 40 and p.state ~= "running" and p.state ~= "done" then keep[#keep + 1] = p end end
+          pieces = { table.unpack(keep, 1, math.min(#keep, 40)) }
+        end
         local state = counts.queued + counts.running > 0 and "running" or
           ((counts.failed + counts.lost > 0) and "failed" or "done")
         local c = L.campaigns[o.id]
@@ -807,8 +871,12 @@ end
 
 -- a fingerprint of the Shulker OS the main hands out: a worker whose own manifest.txt hashes to
 -- something else is behind and updates itself (swarmd, automatic updates)
+local tokenAt = 0
 function M.osToken()
-  M.manifest()
+  if not M.osTokenCache or os.time() - tokenAt >= 10 then
+    tokenAt = os.time()
+    M.manifest()
+  end
   return M.osTokenCache
 end
 

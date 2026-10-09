@@ -42,7 +42,7 @@ local message, messageColor = "", "gray"
 local showHelp = false
 
 local function refresh()
-  local st, e = call({ op = "status" })
+  local st, e = call({ op = "status", compact = true })
   if not st then err = e return end
   status, err = st, nil
   local o = call({ op = "orders" })
@@ -272,8 +272,8 @@ local ok, e = pcall(function()
   local last = os.time()
   while true do
     draw()
-    local ev = T.event(2000)
-    if os.time() - last >= 2 or ev.type ~= "tick" then refresh() last = os.time() end
+    local ev = T.event(3000)
+    if os.time() - last >= 3 or (ev.type ~= "tick" and os.time() - last >= 1) then refresh() last = os.time() end
     local key = (ev.type == "key" or ev.type == "button") and ev.key or nil
     if key == "q" or key == "ctrl-c" then break
     elseif key == ":" or key == "enter" or key == "/" then promptCommand()

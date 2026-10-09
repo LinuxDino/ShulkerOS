@@ -390,7 +390,7 @@ elseif cmd == "order" then
   local parts = {}
   for i = 2, #a do parts[#parts + 1] = a[i]:match("[%s'\"]") and U.q(a[i]) or a[i] end
   line = table.concat(parts, " ")
-  local status = call({ op = "status" })
+  local status = call({ op = "status", compact = true })
   local o, err = O.parse(line, status)
   if not o then U.die("swarm: " .. err) end
   local r = call({ op = "order", label = o.label, kind = o.kind, pieces = o.pieces, campaign = o.campaign })

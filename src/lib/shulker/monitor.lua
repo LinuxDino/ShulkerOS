@@ -140,7 +140,7 @@ function M.read()
     local conf = swarm.loadConf()
     if conf.role == "main" then
       local local_ = setmetatable({ leader = "127.0.0.1" }, { __index = conf })
-      local st = swarm.call(local_, { op = "status" }, 2)
+      local st = swarm.call(local_, { op = "status", compact = true }, 5)
       if st and st.nodes then
         local off, alerts = 0, 0
         for _, n in ipairs(st.nodes) do

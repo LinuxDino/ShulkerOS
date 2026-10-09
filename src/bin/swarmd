@@ -73,9 +73,11 @@ if mode == "leader" then
       local wc = web:accept()
       if wc then pcall(S.serveHttp, wc, S.ip() or conf.leader) end
     end
-    if ready and ready[server] then
+    -- every waiting request in one pass (server is non-blocking): a big swarm queues up quickly
+    for _ = 1, (ready and ready[server]) and 64 or 0 do
       local c = server:accept()
-      if c then
+      if not c then break end
+      do
         c:settimeout(3)
         local line = c:receive("*l")
         local reply
@@ -234,6 +236,10 @@ log("worker for", S.leaderOf(conf) .. ":" .. conf.port)
 local lastDhcp = 0
 local goingHome = false
 local lastAutoCheck, lastAutoUpdate = 0, 0
+-- the job is checked every second, but the main hears from us only when a beat is due (every
+-- HEARTBEAT s at work, BEAT_IDLE s idle) or right away when a job finished: with 100+ drones a beat a
+-- second would swamp the main and the hubs
+local nextBeat, lastFull = 0, 0
 while true do
   checkJob()
   restartIfUpdated(not running and #results == 0)
@@ -244,8 +250,11 @@ while true do
       -- a base that found its uplink now: give the drones their addresses and the relay
       if S.findUplink(conf) then S.startServices(conf) end
     else os.execute("udhcpc -n -q -t 3 -i eth0 >/dev/null 2>&1") end
+    S.ip(true)
   end
-  local stats = S.stats()
+  if not joined or #results > 0 or os.time() >= nextBeat then
+  local full = not joined or os.time() - lastFull >= S.FULL_EVERY
+  local stats = S.stats(full)
   -- drones: below 15 % energy, drive home to the charger (once, until charged above 50 %)
   local d = stats.drone
   if d and d.charge then
@@ -266,8 +275,8 @@ while true do
       setName(reply.name)
     end
   else
-    reply, err = S.call(conf, { op = "heartbeat", stats = stats, running = running and running.id or nil,
-                                results = json.array(results) })
+    reply, err = S.call(conf, { op = "heartbeat", stats = stats, light = not full or nil,
+                                running = running and running.id or nil, results = json.array(results) })
     if reply then
       results = {}
       setName(reply.name)
@@ -298,9 +307,13 @@ while true do
   end
   if reply then
     backoff = S.HEARTBEAT
+    if full then lastFull = os.time() end
+    nextBeat = os.time() + (running and S.HEARTBEAT or S.BEAT_IDLE)
   else
     log(err)
     backoff = math.min(backoff * 2, 30)
+    nextBeat = os.time() + backoff
   end
-  socket.sleep(running and 1 or backoff)
+  end
+  socket.sleep(1)
 end

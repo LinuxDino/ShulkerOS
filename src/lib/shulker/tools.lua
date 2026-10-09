@@ -436,7 +436,7 @@ end
 
 function RUN.swarm_order(i)
   local O = require("shulker.orders")
-  local st, err = swarmCall({ op = "status" })
+  local st, err = swarmCall({ op = "status", compact = true })
   if not st then return err, true end
   local o, perr = O.parse(str(i.command, ""), st)
   if not o then return perr, true end

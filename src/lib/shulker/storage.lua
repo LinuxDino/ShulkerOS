@@ -109,7 +109,7 @@ end
 function M.swarmFind(call, word, timeout)
   local U = require("shulker.util")
   local json = require("shulker.json")
-  local st, err = call({ op = "status" })
+  local st, err = call({ op = "status", compact = true })
   if not st then return nil, err end
   local ids = {}
   for _, n in ipairs(st.nodes or {}) do
