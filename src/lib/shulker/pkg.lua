@@ -193,7 +193,10 @@ M.install = install
 function M.writable()
   local home = U.home()
   if home:find("^/mnt/builtin") then
-    return nil, "Shulker OS runs from the data pack (/mnt/builtin is read-only). Update the data pack, or run the installer to put a copy on the disk."
+    return nil, "Shulker OS runs from the data pack here (/mnt/builtin is read-only), so it cannot update itself.\n" ..
+      "Put an updatable copy on the disk (it is used from then on):\n" ..
+      "  in the swarm:  wget -qO- http://10.42.0.1/swarm/install.sh | SHULKER_REPO=http://10.42.0.1 SHULKER_BRANCH=swarm sh\n" ..
+      "  otherwise:     wget -qO- https://raw.githubusercontent.com/LinuxDino/ShulkerOS/main/install.sh | sh"
   end
   return true
 end

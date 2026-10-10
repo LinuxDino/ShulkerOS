@@ -62,6 +62,9 @@ while a[i] do
   elseif x == "start" then
     if not FB.find() then noProjector() end
     U.mkdir(U.etcdir()) U.write(FLAG, "1\n")
+    os.remove(U.etcdir() .. "/dashboard.off")
+    local old = U.trim(U.read(PID) or "")
+    if old ~= "" and U.exists("/proc/" .. old) then print("dashboard is already running") os.exit(0) end
     os.execute(("SHULKER_HOME=%s nohup %s >> /tmp/shulker-dashboard.log 2>&1 < /dev/null & echo $! > %s")
       :format(U.q(U.home()), U.q(U.home() .. "/bin/dashboard"), PID))
     os.execute("sleep 2")
@@ -70,11 +73,12 @@ while a[i] do
       io.stderr:write("dashboard: it stopped right away:\n" .. U.capture("tail -5 /tmp/shulker-dashboard.log") .. "\n")
       os.exit(1)
     end
-    print("dashboard running on the projector (also at every boot; `dashboard stop` to end)") os.exit(0)
+    print("dashboard running on the projector (also at every boot; on the main it is restarted if it stops; `dashboard stop` to end)") os.exit(0)
   elseif x == "stop" then
     local pid = U.trim(U.read(PID) or "")
     if pid ~= "" then os.execute("kill " .. pid .. " 2>/dev/null") end
     os.remove(PID) os.remove(FLAG)
+    U.write(U.etcdir() .. "/dashboard.off", "turned off with `dashboard stop`\n")   -- the main stops restarting it
     fbcon(true)
     print("dashboard stopped") os.exit(0)
   else print(USAGE) os.exit((x == "-h" or x == "--help") and 0 or 1) end
@@ -96,7 +100,7 @@ local function swarmData()
   if conf.role ~= "main" then return { role = conf.role or "worker", leader = swarm.leaderOf(conf) } end
   local st = swarm.call(setmetatable({ leader = "127.0.0.1" }, { __index = conf }), { op = "status", compact = true }, 5)
   if not st then return { role = "main", down = true } end
-  return { role = "main", nodes = st.nodes or {}, queued = st.queued, running = st.running }
+  return { role = "main", nodes = st.nodes or {}, queued = st.queued, running = st.running, net = st.net }
 end
 
 local function gather()
@@ -185,6 +189,13 @@ local function swarmPanel(d, x0, y0, w, h)
   for _, n in ipairs(s.nodes) do if n.online then on = on + 1 end end
   fb:text(x, y, ("%d/%d online  jobs %d queued %d running"):format(on, total, s.queued or 0, s.running or 0), C.text, C.panel)
   local yy = y + 22
+  local okS, swarm = pcall(require, "shulker.swarm")
+  local netLine, busy = okS and swarm.netText(s.net)
+  if netLine then
+    -- the main's link: green below 50 %, yellow below 80 %, red above (frames get dropped near 100 %)
+    fb:text(x, yy, netLine:sub(1, math.floor(iw / 8)), busy >= 80 and C.err or busy >= 50 and C.warn or C.ok, C.panel)
+    yy = yy + 20
+  end
   local colW = math.floor(iw / 2)
   local col = 0
   for _, n in ipairs(s.nodes) do

@@ -178,6 +178,15 @@ function M.droneInfo(light)
   return info
 end
 
+-- the main's link load as one line (status.net), and how busy it is in percent (the higher of the two
+-- OC2 limits: 64 KB/s out of a network connector, 640 frames/s through a hub)
+function M.netText(net)
+  if type(net) ~= "table" then return nil, 0 end
+  local busy = math.max(tonumber(net.tx_pct) or 0, tonumber(net.hub_pct) or 0)
+  return ("net out %.1f KB/s (%d%% of 64)  in %.1f KB/s  %d frames/s (%d%% of a hub)"):format(
+    (net.tx or 0) / 1024, net.tx_pct or 0, (net.rx or 0) / 1024, net.fps or 0, net.hub_pct or 0), busy
+end
+
 -- the leader address: "auto" = whoever gave us our address (the main node, or a drone base)
 local gwCache, gwAt = nil, 0
 function M.leaderOf(conf)
@@ -653,6 +662,34 @@ function M.newLeader(conf)
     return { load = st.load, alerts = st.alerts, energy = st.energy, drone = d, kind = st.kind, droneWhy = st.droneWhy }
   end
 
+  -- the main's own link: bytes and frames per second since the last look (every status asks, at most
+  -- every 2 s). OC2 limits: a network connector sends 64 KB/s, a hub passes 640 frames/s
+  local netLast, netRate
+  local function netLoad()
+    local now = os.time()
+    if netLast and now - netLast.t < 2 then return netRate end
+    local best
+    for line in (U.read("/proc/net/dev") or ""):gmatch("[^\n]+") do
+      local name, rest = line:match("^%s*([%w%.]+):%s*(.*)$")
+      if name and name ~= "lo" then
+        local f = {}
+        for v in rest:gmatch("%d+") do f[#f + 1] = tonumber(v) end
+        if f[9] and (not best or f[1] + f[9] > best.rxb + best.txb) then
+          best = { rxb = f[1], rxp = f[2], txb = f[9], txp = f[10] }
+        end
+      end
+    end
+    if best and netLast and now > netLast.t then
+      local dt = now - netLast.t
+      local rx, tx = math.max(0, (best.rxb - netLast.rxb) / dt), math.max(0, (best.txb - netLast.txb) / dt)
+      local fps = math.max(0, (best.rxp + best.txp - netLast.rxp - netLast.txp) / dt)
+      netRate = { rx = math.floor(rx), tx = math.floor(tx), fps = math.floor(fps),
+                  tx_pct = math.floor(tx / (64 * 1024) * 100 + 0.5), hub_pct = math.floor(fps / 640 * 100 + 0.5) }
+    end
+    if best then best.t = now netLast = best end
+    return netRate
+  end
+
   function H.status(msg)
     local compact = msg and msg.compact
     local nodes = {}
@@ -673,7 +710,7 @@ function M.newLeader(conf)
     local gw = U.trim(U.read("/tmp/swarm-gateway") or "")
     return { ok = true, nodes = json.array(nodes), queued = q, running = r, gateway = gw ~= "" and gw or "unknown",
              leader = { ip = M.ip(), host = U.trim(U.read("/etc/hostname") or "") },
-             enrolling = math.max(0, L.enrollUntil - os.time()),
+             enrolling = math.max(0, L.enrollUntil - os.time()), net = netLoad(),
              log = json.array(compact and { L.log[1], L.log[2], L.log[3], L.log[4], L.log[5], L.log[6] } or L.log) }
   end
 

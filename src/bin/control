@@ -212,7 +212,9 @@ local function footer()
     line = line .. (#names > 0 and ("ALERTS: " .. table.concat(names, ", ")) or "no alerts")
   end
   if status then line = line .. "   gateway " .. tostring(status.gateway) end
-  T.at(2, T.H - 3, line:sub(1, T.W - 2), mon and #(mon.alerts or {}) > 0 and "pink" or "gray")
+  local netLine, busy = S.netText(status and status.net)
+  if netLine then line = line .. "   " .. netLine end
+  T.at(2, T.H - 3, line:sub(1, T.W - 2), (mon and #(mon.alerts or {}) > 0 or busy >= 80) and "pink" or "gray")
   T.at(1, T.H - 2, pad(" > ", T.W), "gray", "black")
   T.at(4, T.H - 2, "press : to type a command (help for the list)", "gray", "black")
   local x = T.button(2, T.H - 1, "Command :", ":")

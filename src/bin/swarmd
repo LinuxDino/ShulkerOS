@@ -64,7 +64,7 @@ if mode == "leader" then
   local web = socket.bind("*", S.HTTP_PORT)
   if web then web:settimeout(0) log("serving the network install on port", S.HTTP_PORT)
   else log("cannot serve the network install on port", S.HTTP_PORT) end
-  local lastReap, lastGw = 0, 0
+  local lastReap, lastGw, lastDash = 0, 0, 0
   -- automatic updates: the main checks GitHub 15 minutes after it starts, then once a day
   local nextAuto = os.time() + 900
   while true do
@@ -98,6 +98,17 @@ if mode == "leader" then
         log("automatic update: checking GitHub")
         os.execute(("(echo; date; SHULKER_HOME=%s %s update) >> /tmp/shulker-autoupdate.log 2>&1 &")
           :format(U.q(U.home()), U.q(U.home() .. "/bin/shulker")))
+      end
+    end
+    -- the projector dashboard stays on at the main whenever a projector is connected (`dashboard stop`
+    -- turns it off for good, `dashboard start` back on)
+    if os.time() - lastDash >= 30 then
+      lastDash = os.time()
+      local pid = U.trim(U.read("/tmp/shulker-dashboard.pid") or "")
+      local running = pid ~= "" and U.exists("/proc/" .. pid)
+      if not running and U.exists("/dev/fb0") and not U.exists(U.etcdir() .. "/dashboard.off") then
+        log("projector found: starting the dashboard")
+        os.execute(("SHULKER_HOME=%s %s start >/dev/null 2>&1 &"):format(U.q(U.home()), U.q(U.home() .. "/bin/dashboard")))
       end
     end
     if os.time() - lastReap >= 2 then

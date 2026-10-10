@@ -8,6 +8,9 @@
   "nodeN" is renamed "droneN"; drones never take computer jobs
 - Drones reconnect to the OC2 bus when reading the robot fails (a dead bus connection meant no robot report, so
   no work and "0 drones"); `drone debug` and `swarm drones` say why a drone gets no work
+- Network load of the main (KB/s against the 64 KB/s of a network connector, frames/s against the 640 of a hub)
+  in `control` and on the dashboard; the main keeps the dashboard running whenever a projector is connected
+  (`dashboard stop` turns that off); a computer running from the data pack says how to install an updatable copy
 - Control Center (`control`): computers, drones, orders with progress, energy and alarms, command bar
 - Orders split over the swarm: `mine` (drones, slices, charging, take-over), `home`, `go`, `run`, `map`, `stop`
 - Storage from any mod: `storage`, `storage find`, `swarm find`, `swarm devices`; monitor sensors `fluid.N`,
