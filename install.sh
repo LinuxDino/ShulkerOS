@@ -92,7 +92,20 @@ if [ -f "$PREFIX/manifest.txt" ]; then
 		grep -q " $old\$" "$STAGE/files" || rm -f "$PREFIX/$old"
 	done
 fi
-cp -r "$STAGE/src/." "$PREFIX/" || die "copying to $PREFIX failed (disk full?)"
+if ! cp -r "$STAGE/src/." "$PREFIX/" 2>"$STAGE/cp.err"; then
+	cat "$STAGE/cp.err" >&2
+	# a damaged file in the old copy ("I/O error") cannot be overwritten: set the old copy aside and
+	# install into a fresh directory (new files, new disk blocks)
+	OLD="$PREFIX.damaged-$$"
+	say "the old copy cannot be overwritten: moving it to $OLD and installing fresh"
+	mv "$PREFIX" "$OLD" || die "copying to $PREFIX failed and the old copy cannot be moved"
+	mkdir -p "$PREFIX" || die "cannot create $PREFIX"
+	if ! cp -r "$STAGE/src/." "$PREFIX/"; then
+		rm -rf "$PREFIX"; mv "$OLD" "$PREFIX"
+		die "copying to $PREFIX failed (disk full?)"
+	fi
+	rm -rf "$OLD" 2>/dev/null || say "${Rd}could not delete $OLD (damaged files stay on the disk)${N}"
+fi
 cp "$STAGE/manifest.txt" "$PREFIX/manifest.txt"
 chmod 755 "$PREFIX"/bin/* "$PREFIX/etc/rc.shulker"
 sync
