@@ -86,7 +86,7 @@ local function header()
     local on, total, dr = 0, #status.nodes, 0
     for _, n in ipairs(status.nodes) do
       if n.online then on = on + 1 end
-      if n.stats and type(n.stats.drone) == "table" then dr = dr + 1 end
+      if n.stats and (type(n.stats.drone) == "table" or n.stats.kind == "drone") then dr = dr + 1 end
     end
     info = ("%d/%d online  %d drone%s  jobs %d queued %d running"):format(on, total, dr, dr == 1 and "" or "s",
       status.queued or 0, status.running or 0)
@@ -104,7 +104,8 @@ local function left(top, h)
   if not status then T.at(3, y, "waiting...", "gray") return end
   local comps, drones = {}, {}
   for _, n in ipairs(status.nodes) do
-    if n.stats and type(n.stats.drone) == "table" then drones[#drones + 1] = n else comps[#comps + 1] = n end
+    if n.stats and (type(n.stats.drone) == "table" or n.stats.kind == "drone") then drones[#drones + 1] = n
+    else comps[#comps + 1] = n end
   end
   local nDr = math.min(#drones, 6)
   local compRows = maxY - y + 1 - (nDr > 0 and nDr + 1 or 0)
@@ -129,12 +130,13 @@ local function left(top, h)
     y = y + 1
     for i = 1, nDr do
       local n = drones[i]
-      local d = n.stats.drone
+      local d = type(n.stats.drone) == "table" and n.stats.drone or {}
       local ch = tonumber(d.charge)
       dot(3, y, not n.online and "off" or n.busy and "busy" or "idle")
       T.at(5, y, pad(n.name, 8), n.online and "bright" or "gray")
       T.at(14, y, ch and ("%3d%%"):format(ch) or "  ?%", ch and ch < 20 and "pink" or "aqua")
       local what = not n.online and "offline" or n.busy and (jobLabel(n.busy) or "busy") or
+        (type(n.stats.drone) ~= "table" and "no robot report") or
         (ch and ch < 25 and "charge" or "idle")
       T.at(19, y, pad(what, LW - 20), "gray")
       y = y + 1

@@ -6,6 +6,8 @@
   drive + RISC-V CPU + dye), so drives for many drones come from a crafting table or an autocrafter
 - Drones join as drones: a drone drive says so at boot, before the OC2 bus is up; a drone that joined as
   "nodeN" is renamed "droneN"; drones never take computer jobs
+- Drones reconnect to the OC2 bus when reading the robot fails (a dead bus connection meant no robot report, so
+  no work and "0 drones"); `drone debug` and `swarm drones` say why a drone gets no work
 - Control Center (`control`): computers, drones, orders with progress, energy and alarms, command bar
 - Orders split over the swarm: `mine` (drones, slices, charging, take-over), `home`, `go`, `run`, `map`, `stop`
 - Storage from any mod: `storage`, `storage find`, `swarm find`, `swarm devices`; monitor sensors `fluid.N`,

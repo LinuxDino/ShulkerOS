@@ -32,6 +32,14 @@ function M.bus()
   return bus
 end
 
+-- drop the connection: the next M.bus() connects again (a long-running service whose bus daemon
+-- restarted keeps a dead connection otherwise, and every call fails from then on)
+function M.reset()
+  if bus and type(bus.close) == "function" then pcall(bus.close, bus) end
+  bus = nil
+  package.loaded["devices"] = nil
+end
+
 function M.list()
   local b, err = M.bus()
   if not b then return nil, err end

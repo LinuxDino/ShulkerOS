@@ -33,6 +33,7 @@ usage: drone status [--json]          energy, position, facing, modules
        drone mine X1 Y1 Z1 X2 Y2 Z2   dig out that box, layer by layer; charges itself when low
        drone clear X1 Y1 Z1 X2 Y2 Z2  clear the box fast (3 layers per pass), empties into its dump block
        drone check                    is it ready for clearing: modules, pickaxes, dump block, origin
+       drone debug                    why it gets no work: bus, robot report, link, what the main says
        drone travel [Y]                height (world y) for trips home and out; default charger + 3
 see `man drone`]==]
 
@@ -150,6 +151,28 @@ elseif cmd == "travel" then
   end
   print(("travel height: %d (world y); keep the blocks above the charger free up to it"):format(
     (D.origin() and D.origin().y or 0) + D.travelY()))
+elseif cmd == "debug" then
+  -- what the swarm service sees: the same path it uses (through the OC2 bus daemon), plus the link
+  local S = require("shulker.swarm")
+  local function show(label, value) print(("%-14s %s"):format(label, tostring(value))) end
+  show("bus daemon", U.exists("/run/oc2/bus") and "socket /run/oc2/bus present" or "NOT running (no /run/oc2/bus)")
+  show("kind", S.kind() .. (S.droneDrive() and " (setup.conf role=drone)" or ""))
+  local info = S.droneInfo()
+  show("robot report", info and ("ok: %s%% at %s"):format(tostring(info.charge),
+    info.pos and ("%d %d %d"):format(info.pos.x, info.pos.y, info.pos.z) or "?") or ("NONE: " .. tostring(S.droneWhy)))
+  show("address", S.ip() or "none (no lease from the base)")
+  show("route", (U.capture("ip route 2>/dev/null"):match("default via %S+") or "no default route"))
+  local conf = S.loadConf()
+  show("main", S.leaderOf(conf) .. ":" .. tostring(conf.port or S.PORT))
+  local r, err = S.call(conf, { op = "status", compact = true }, 5)
+  if not r then show("main answers", "NO: " .. tostring(err))
+  else
+    for _, n in ipairs(r.nodes or {}) do
+      if n.name == conf.name then show("main says", n.name .. ": " .. tostring(n.why)) end
+    end
+  end
+  print("last lines of the swarm service log (/tmp/swarmd-worker.log):")
+  io.write(U.capture("tail -n 8 /tmp/swarmd-worker.log 2>/dev/null"))
 elseif cmd == "check" then
   local _, why = D.robot()
   local info = D.info()

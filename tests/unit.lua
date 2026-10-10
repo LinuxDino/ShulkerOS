@@ -370,6 +370,22 @@ test("leader: a drone that joined before its bus was up becomes droneN, never ta
   -- a light beat merges and keeps the name; a real computer stays a node
   eq(L.handle({ op = "heartbeat", token = "t0k", light = true, stats = { mac = "d2", drone = { charge = 89 } } }).name, "drone2")
   eq(L.handle({ op = "join", stats = { mac = "c1", ip = "10.42.0.5", kind = "node" } }).name, "node1")
+  -- why: the main explains what each drone waits for
+  local function why(name)
+    for _, n in ipairs(L.handle({ op = "status", token = "t0k", compact = true }).nodes) do
+      if n.name == name then return n.why end
+    end
+  end
+  L.handle({ op = "heartbeat", token = "t0k", stats = { mac = "d1", kind = "drone", droneWhy = "OC2 bus daemon not running" } })
+  truthy(why("drone1"):find("no robot report") and why("drone1"):find("bus daemon"), why("drone1"))
+  for _, j in ipairs(L.jobs) do j.state = "done" end
+  L.handle({ op = "heartbeat", token = "t0k", stats = { mac = "d2", drone = { charge = 90 } } })
+  truthy(why("drone2"):find("no clear order"), why("drone2"))
+  L.handle({ op = "order", token = "t0k", label = "clear", campaign = { x1 = 0, z1 = 0, x2 = 15, z2 = 15, top = 70, bottom = 60 } })
+  truthy(why("drone2"):find("next heartbeat"), why("drone2"))
+  L.handle({ op = "heartbeat", token = "t0k", stats = { mac = "d2", drone = { charge = 10 } } })
+  truthy(why("drone2"):find("charging"), why("drone2"))
+  os.remove(U.etcdir() .. "/swarm-campaigns.json")   -- the next tests start without this order
 end)
 
 test("orders: words, mine planning, parse", function()

@@ -315,7 +315,7 @@ elseif cmd == "drones" then
   local n = 0
   print(c("dim", ("%-8s %-10s %-6s %-8s %-14s %-8s %s"):format("DRONE", "BASE", "STATE", "ENERGY", "POSITION", "FACING", "MODULES")))
   for _, x in ipairs(r.nodes) do
-    local d = x.stats and x.stats.drone
+    local d = x.stats and type(x.stats.drone) == "table" and x.stats.drone
     if d then
       n = n + 1
       local pos = d.pos and ("%d %d %d"):format(d.pos.x, d.pos.y, d.pos.z) or "?"
@@ -323,6 +323,12 @@ elseif cmd == "drones" then
       local charge = d.charge and ((d.charge < 15 and c("err", "%3d%%") or "%3d%%"):format(d.charge)) or "  ?"
       print(("%-8s %-10s %s %-8s %-14s %-8s %s"):format(c("soft", ("%-8s"):format(x.name)), x.via or "-", state, charge,
         pos, tostring(d.facing or "?"), table.concat(d.modules or {}, ",")))
+      if x.why then print("         " .. c("dim", x.why)) end
+    elseif x.stats and x.stats.kind == "drone" then
+      -- a drone drive that sends no robot report: the main gives it no work until it does
+      n = n + 1
+      print(("%-8s %-10s %s %s"):format(c("soft", ("%-8s"):format(x.name)), x.via or "-",
+        x.online and c("err", "no robot report") or c("err", "off"), c("dim", x.why or "")))
     end
   end
   if n == 0 then print("No drones yet. See `man drone`: a robot with the Shulker Drone drive, linked to a drone base.") end

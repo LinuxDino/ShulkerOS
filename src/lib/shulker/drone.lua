@@ -19,6 +19,13 @@ function M.robot()
   return robotLib
 end
 
+-- connect to the robot again (see devices.reset)
+function M.reset()
+  robotLib, robotErr = nil, nil
+  package.loaded["robot"] = nil
+  devices.reset()
+end
+
 function M.isDrone()
   return M.robot() ~= nil
 end

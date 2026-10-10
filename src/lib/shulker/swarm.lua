@@ -137,27 +137,40 @@ end
 
 -- robots report energy, position and modules (nil on normal computers). "Not a robot" is decided only
 -- when the bus answers and lists no robot device: at boot the bus daemon comes up after swarmd
+-- M.droneWhy says why there is no robot report (sent to the main, shown by `swarm drones` and control).
+-- A failed read drops the bus connection (at most every 20 s): the next beat connects again.
 local isRobot
+local resetAt = 0
+M.droneWhy = nil
 function M.droneInfo(light)
   if isRobot == false then return nil end
   -- swarmd runs all the time: it must reach the robot through OC2's bus daemon only (see devices.lua)
   local devices = require("shulker.devices")
   devices.daemonOnly = true
-  if not U.exists(devices.SOCKET) then return nil end
+  if not U.exists(devices.SOCKET) then M.droneWhy = "OC2 bus daemon not running (" .. devices.SOCKET .. ")" return nil end
   local ok, D = pcall(require, "shulker.drone")
-  if not ok then return nil end
-  local info = D.isDrone() and D.info(light) or nil
+  if not ok then M.droneWhy = "drone library: " .. tostring(D) return nil end
+  local okR, r = pcall(D.isDrone)
+  local info = okR and r and D.info(light) or nil
+  if info and info.energy == nil and info.pos == nil then info = nil end   -- every robot call failed
   if not info then
-    local list = devices.list()
+    local _, why = D.robot()
+    local list, lerr = devices.list()
     if list and #list > 0 then
       local robot = false
       for _, d in ipairs(list) do
         for _, t in ipairs(d.types) do if t == "robot" then robot = true end end
       end
-      if not robot then isRobot = false end
+      if not robot and not M.droneDrive() then isRobot = false end
+      M.droneWhy = robot and ("robot found, but reading it failed: " .. tostring(why or "no answer")) or
+        "no robot device on the bus (is this an OC2 robot?)"
+    else
+      M.droneWhy = "the OC2 bus does not answer: " .. tostring(lerr or why or "?")
     end
+    if os.time() - resetAt >= 20 then resetAt = os.time() pcall(D.reset) end
     return nil
   end
+  M.droneWhy = nil
   isRobot = true
   -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
   local o = D.origin()
@@ -214,7 +227,7 @@ function M.stats(full)
   if not full then
     return {
       mac = M.mac(), ip = M.ip(), load = readNum("/proc/loadavg", "^(%S+)") or 0, mem_free = avail,
-      rx = tonumber(rx0), tx = tonumber(tx0), drone = M.droneInfo(true), kind = M.kind(),
+      rx = tonumber(rx0), tx = tonumber(tx0), drone = M.droneInfo(true), kind = M.kind(), droneWhy = M.droneWhy,
       energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
       alerts = mon and #(mon.alerts or {}) or nil,
     }
@@ -233,6 +246,7 @@ function M.stats(full)
     rx = tonumber(rx), tx = tonumber(tx),
     drone = M.droneInfo(),
     kind = M.kind(),
+    droneWhy = M.droneWhy,
     devices = M.busSummary(),
     energy = mon and mon.sensors and mon.sensors.energy and mon.sensors.energy.value,
     alerts = mon and #(mon.alerts or {}) or nil,
@@ -477,6 +491,39 @@ function M.newLeader(conf)
     if isDrone(n) then return L.campaignPiece(n) end
   end
 
+  -- why a node does what it does (or nothing): `swarm drones`, `swarm status` and control show it
+  function L.why(n)
+    if not online(n) then return "offline (no heartbeat for " .. (os.time() - (n.seen or 0)) .. " s)" end
+    if n.busy then return "working on job " .. n.busy end
+    local st = type(n.stats) == "table" and n.stats or {}
+    if not isDrone(n) then
+      if st.kind == "drone" then return "no robot report from the drone: " .. tostring(st.droneWhy or "old Shulker OS on it?") end
+      return "idle"
+    end
+    for _, j in ipairs(L.jobs) do
+      if j.state == "queued" and (j.target == n.name or j.target == "drone") then return "job " .. j.id .. " waiting for it" end
+    end
+    local ch = tonumber(st.drone.charge)
+    if ch and ch < 25 then return "charging (" .. ch .. "%, works from 25%)" end
+    local f = L.droneFails[n.name]
+    if f and f.count >= 2 and os.time() < f.untilT then
+      return ("paused after %d failed pieces, until %s (swarm orders shows the error)"):format(f.count, os.date("%H:%M", f.untilT))
+    end
+    local active, free = 0, 0
+    for _, c in pairs(L.campaigns) do
+      if not c.stopped then
+        active = active + 1
+        for _, chk in ipairs(c.chunks) do
+          if not chk.job and not chk.failed and chk.band <= #c.bands and (chk.owner == nil or chk.owner == n.name)
+             and chk.lastFailedBy ~= n.name then free = free + 1 end
+        end
+      end
+    end
+    if active == 0 then return "idle: no clear order running" end
+    if free == 0 then return "idle: every piece of the clear orders is taken or done" end
+    return "idle: gets a piece at its next heartbeat"
+  end
+
   -- jobs whose node vanished are queued again (once) or marked lost
   function L.reap()
     local byName = {}
@@ -603,7 +650,7 @@ function M.newLeader(conf)
   local function compactStats(st)
     if type(st) ~= "table" then return nil end
     local d = type(st.drone) == "table" and { charge = st.drone.charge, pos = st.drone.pos, world = st.drone.world } or nil
-    return { load = st.load, alerts = st.alerts, energy = st.energy, drone = d }
+    return { load = st.load, alerts = st.alerts, energy = st.energy, drone = d, kind = st.kind, droneWhy = st.droneWhy }
   end
 
   function H.status(msg)
@@ -613,7 +660,8 @@ function M.newLeader(conf)
       nodes[#nodes + 1] = { name = n.name, mac = not compact and n.mac or nil, ip = n.ip, online = online(n), busy = n.busy,
                             seen = n.seen and (os.time() - n.seen) or nil,
                             stats = compact and compactStats(n.stats) or n.stats,
-                            rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac, via = n.via }
+                            rx_rate = n.rxRate, tx_rate = n.txRate, main = n.mac == L.mainMac, via = n.via,
+                            why = L.why(n) }
     end
     table.sort(nodes, function(a, b)
       return (tonumber(a.name:match("%d+")) or 0) < (tonumber(b.name:match("%d+")) or 0)

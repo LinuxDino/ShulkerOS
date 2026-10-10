@@ -241,6 +241,7 @@ local lastAutoCheck, lastAutoUpdate = 0, 0
 -- second would swamp the main and the hubs
 local nextBeat, lastFull = 0, 0
 local failedBeats = 0
+local lastDroneWhy
 while true do
   checkJob()
   restartIfUpdated(not running and #results == 0)
@@ -261,6 +262,10 @@ while true do
   if not joined or #results > 0 or os.time() >= nextBeat then
   local full = not joined or os.time() - lastFull >= S.FULL_EVERY
   local stats = S.stats(full)
+  if S.droneWhy ~= lastDroneWhy then
+    log(S.droneWhy and ("no robot report: " .. S.droneWhy) or "robot report ok")
+    lastDroneWhy = S.droneWhy
+  end
   -- drones: below 15 % energy, drive home to the charger (once, until charged above 50 %)
   local d = stats.drone
   if d and d.charge then
