@@ -151,7 +151,13 @@ elseif cmd == "travel" then
   print(("travel height: %d (world y); keep the blocks above the charger free up to it"):format(
     (D.origin() and D.origin().y or 0) + D.travelY()))
 elseif cmd == "check" then
+  local _, why = D.robot()
   local info = D.info()
+  if not info then
+    print(c("err", "FAIL") .. "  robot not reachable: " .. tostring(why or "no OC2 robot device"))
+    print("      is this an OC2 robot? the OC2 bus starts a few seconds after boot: try again in 30 s")
+    os.exit(1)
+  end
   local sl = D.slots()
   local okAll = true
   local function line(ok, text)
