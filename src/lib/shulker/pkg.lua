@@ -68,10 +68,25 @@ function M.fetch(url, dest)
     os.execute("sleep 3")
     out, code = U.capture(cmd:format(U.q(dest), U.q(url)))
   end
+  -- "bad address": no name server (resolv.conf lives in /tmp and is lost when the interface came up
+  -- without its "up" line): use the configured one, or 1.1.1.1, and try once more
+  if code ~= 0 and (out:match("bad address") or out:match("resolve host")) then
+    local rc = U.read("/etc/resolv.conf") or ""
+    if not rc:match("nameserver") and U.capture("ip route 2>/dev/null"):match("default") then
+      local ns = (U.read("/etc/network/interfaces") or ""):match("echo 'nameserver ([%d.]+)'") or "1.1.1.1"
+      local f = io.open("/etc/resolv.conf", "w")      -- through the symlink into /tmp
+      if f then
+        f:write("nameserver " .. ns .. "\n") f:close()
+        out, code = U.capture(cmd:format(U.q(dest), U.q(url)))
+      end
+    end
+  end
   if code ~= 0 then
     os.remove(dest)
     out = out:gsub("wget: note: TLS certificate validation not implemented\n?", "")
-    return nil, ("download failed: %s %s"):format(url, U.trim(out))
+    local hint = (out:match("bad address") or out:match("resolve host"))
+      and "\n  (no name resolution: check the gateway with `netcfg test`)" or ""
+    return nil, ("download failed: %s %s%s"):format(url, U.trim(out), hint)
   end
   return true
 end

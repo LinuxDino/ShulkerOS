@@ -21,6 +21,12 @@ start() {
 		cmp -s "$SHULKER_HOME/share/issue" /etc/issue 2>/dev/null || cp "$SHULKER_HOME/share/issue" /etc/issue 2>/dev/null
 		cmp -s "$SHULKER_HOME/share/motd" /etc/motd 2>/dev/null || cp "$SHULKER_HOME/share/motd" /etc/motd 2>/dev/null
 	fi
+	# a name server: /etc/resolv.conf lives in /tmp and is written by the interface's "up" line; when that
+	# did not happen at boot (interface came up late, or by hand), downloads fail with "bad address"
+	if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null && ip route 2>/dev/null | grep -q '^default'; then
+		ns=$(sed -n "s/.*echo 'nameserver \([0-9.]*\)'.*/\1/p" /etc/network/interfaces 2>/dev/null | head -n 1)
+		echo "nameserver ${ns:-1.1.1.1}" > /etc/resolv.conf
+	fi
 	# scheduled jobs
 	if ! pidof crond >/dev/null 2>&1; then
 		printf 'Starting crond (Shulker jobs): '
