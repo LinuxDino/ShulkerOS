@@ -272,6 +272,7 @@ while true do
   end
   if not joined or #results > 0 or os.time() >= nextBeat then
   local full = not joined or os.time() - lastFull >= S.FULL_EVERY
+  S.jobRunning = running ~= nil
   local stats = S.stats(full)
   if S.droneWhy ~= lastDroneWhy then
     log(S.droneWhy and ("no robot report: " .. S.droneWhy) or "robot report ok")

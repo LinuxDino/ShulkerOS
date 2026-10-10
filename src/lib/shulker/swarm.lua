@@ -140,16 +140,54 @@ end
 -- M.droneWhy says why there is no robot report (sent to the main, shown by `swarm drones` and control).
 -- A failed read drops the bus connection (at most every 20 s): the next beat connects again.
 local isRobot
-local resetAt = 0
+local resetAt, busdAt, cliAt, cliInfo = 0, 0, 0, nil
 M.droneWhy = nil
+M.jobRunning = false    -- swarmd sets it: a job (drone clear ...) may hold the robot's bus ports
+local function worldPos(D, info)
+  -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
+  local o = D.origin()
+  if o and info.pos then info.pos = D.toWorld(info.pos) info.world = true end
+  return info
+end
 function M.droneInfo(light)
   if isRobot == false then return nil end
   -- swarmd runs all the time: it must reach the robot through OC2's bus daemon only (see devices.lua)
   local devices = require("shulker.devices")
   devices.daemonOnly = true
-  if not U.exists(devices.SOCKET) then M.droneWhy = "OC2 bus daemon not running (" .. devices.SOCKET .. ")" return nil end
   local ok, D = pcall(require, "shulker.drone")
   if not ok then M.droneWhy = "drone library: " .. tostring(D) return nil end
+  if not U.exists(devices.SOCKET) then
+    -- OC2's bus daemon is not running (it gives up when something held the ports while it started):
+    -- start it, at most once a minute and never while a job uses the robot
+    local script = "/mnt/builtin/init.d/S25oc2busd"
+    if not M.jobRunning and os.time() - busdAt >= 60 and U.exists(script) then
+      busdAt = os.time()
+      os.execute(script .. " start >/dev/null 2>&1")
+    end
+  end
+  if not U.exists(devices.SOCKET) then
+    -- still no daemon: a short `drone status` reads the robot directly and lets go of it when it exits
+    if M.jobRunning then
+      M.droneWhy = "OC2 bus daemon not running; no report while a job uses the robot"
+      return nil
+    end
+    if os.time() - cliAt >= 15 or not cliInfo then
+      cliAt = os.time()
+      local out = U.capture("timeout 20 " .. U.q(U.home() .. "/bin/drone") .. " status --json 2>/dev/null")
+      local okJ, info = pcall(json.decode, out:match("{.*}") or "")
+      cliInfo = okJ and type(info) == "table" and (info.energy or info.pos) and info or nil
+    end
+    if not cliInfo then
+      M.droneWhy = "OC2 bus daemon not running (" .. devices.SOCKET .. ") and `drone status` failed"
+      return nil
+    end
+    M.droneWhy = nil
+    isRobot = true
+    local copy = {}
+    for k, v in pairs(cliInfo) do copy[k] = v end
+    if copy.pos then copy.pos = { x = copy.pos.x, y = copy.pos.y, z = copy.pos.z } end
+    return worldPos(D, copy)
+  end
   local okR, r = pcall(D.isDrone)
   local info = okR and r and D.info(light) or nil
   if info and info.energy == nil and info.pos == nil then info = nil end   -- every robot call failed
@@ -172,10 +210,7 @@ function M.droneInfo(light)
   end
   M.droneWhy = nil
   isRobot = true
-  -- world coordinates once `drone origin` is set, so the main can plan areas for all drones at once
-  local o = D.origin()
-  if o and info.pos then info.pos = D.toWorld(info.pos) info.world = true end
-  return info
+  return worldPos(D, info)
 end
 
 -- the main's link load as one line (status.net), and how busy it is in percent (the higher of the two
