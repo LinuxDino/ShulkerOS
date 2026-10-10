@@ -240,11 +240,17 @@ local lastAutoCheck, lastAutoUpdate = 0, 0
 -- HEARTBEAT s at work, BEAT_IDLE s idle) or right away when a job finished: with 100+ drones a beat a
 -- second would swamp the main and the hubs
 local nextBeat, lastFull = 0, 0
+local failedBeats = 0
 while true do
   checkJob()
   restartIfUpdated(not running and #results == 0)
-  -- no address yet (the main node was off when this one booted): keep asking for one
-  if not S.ip() and os.time() - lastDhcp >= 20 then
+  -- no address yet (the main node was off when this one booted), or a drone that lost its way to the
+  -- base (no default route, or the main unreachable for a while, e.g. after the base rebooted): ask again
+  local function lost()
+    return conf.base ~= "1" and conf.leader == "auto" and conf.role ~= "main" and
+      (failedBeats >= 3 or not U.capture("ip route 2>/dev/null"):match("default"))
+  end
+  if os.time() - lastDhcp >= 20 and (not S.ip() or lost()) then
     lastDhcp = os.time()
     if conf.base == "1" then
       -- a base that found its uplink now: give the drones their addresses and the relay
@@ -306,11 +312,13 @@ while true do
     end
   end
   if reply then
+    failedBeats = 0
     backoff = S.HEARTBEAT
     if full then lastFull = os.time() end
     nextBeat = os.time() + (running and S.HEARTBEAT or S.BEAT_IDLE)
   else
     log(err)
+    failedBeats = failedBeats + 1
     backoff = math.min(backoff * 2, 30)
     nextBeat = os.time() + backoff
   end
